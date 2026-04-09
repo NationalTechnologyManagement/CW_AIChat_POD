@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NTM AI Assistant</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-input: #0f3460;
+            --bg-message-user: #1a3a5c;
+            --bg-message-ai: #1e2a3a;
+            --bg-header: #0f0f23;
+            --bg-context: #12122a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0b0;
+            --text-muted: #6a6a7a;
+            --accent: #4a9eff;
+            --accent-hover: #3a8eef;
+            --success: #4caf50;
+            --error: #ef5350;
+            --warning: #ff9800;
+            --border: #2a2a4a;
+            --scrollbar-track: #1a1a2e;
+            --scrollbar-thumb: #3a3a5a;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-input: #e8e8e8;
+            --bg-message-user: #e3f2fd;
+            --bg-message-ai: #f5f5f5;
+            --bg-header: #ffffff;
+            --bg-context: #fafafa;
+            --text-primary: #212121;
+            --text-secondary: #555555;
+            --text-muted: #888888;
+            --accent: #1976d2;
+            --accent-hover: #1565c0;
+            --border: #e0e0e0;
+            --scrollbar-track: #f0f0f0;
+            --scrollbar-thumb: #c0c0c0;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 600px;
+            max-height: 600px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 12px;
+            background: var(--bg-header);
+            border-bottom: 1px solid var(--border);
+            min-height: 38px;
+            flex-shrink: 0;
+        }
+
+        .header-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--accent);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .model-select {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 3px 6px;
+            font-size: 11px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px;
+            line-height: 1;
+        }
+
+        /* Context Bar */
+        .context-bar {
+            padding: 6px 12px;
+            background: var(--bg-context);
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .context-summary {
+            font-size: 12px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .context-summary strong {
+            color: var(--text-primary);
+        }
+
+        .context-details {
+            display: none;
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .context-details.expanded { display: block; }
+
+        /* Error Banner */
+        .error-banner {
+            padding: 12px;
+            background: #2a1a1a;
+            border-bottom: 2px solid var(--error);
+            color: var(--error);
+            text-align: center;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+
+        [data-theme="light"] .error-banner {
+            background: #ffebee;
+        }
+
+        /* Chat Area */
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .chat-area::-webkit-scrollbar { width: 6px; }
+        .chat-area::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+        .chat-area::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+
+        .message {
+            padding: 4px 10px;
+            border-radius: 8px;
+            max-width: 90%;
+            line-height: 1.3;
+            word-wrap: break-word;
+        }
+
+        .message-user {
+            background: var(--bg-message-user);
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message-assistant {
+            background: var(--bg-message-ai);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+        }
+
+        .message-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+            text-transform: uppercase;
+        }
+
+        .message-content { font-size: 13px; line-height: 1.3; }
+
+        .message-content p { margin-bottom: 1px; }
+        .message-content p:last-child { margin-bottom: 0; }
+
+        .message-content code {
+            background: rgba(0,0,0,0.2);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+        }
+
+        [data-theme="light"] .message-content code {
+            background: rgba(0,0,0,0.06);
+        }
+
+        .message-content pre {
+            background: rgba(0,0,0,0.3);
+            padding: 6px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 4px 0;
+        }
+
+        [data-theme="light"] .message-content pre {
+            background: rgba(0,0,0,0.05);
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+            font-size: 12px;
+        }
+
+        .message-content ul, .message-content ol {
+            padding-left: 16px;
+            margin: 2px 0;
+        }
+
+        .message-content li { margin-bottom: 0; }
+
+        .message-content strong { font-weight: 600; }
+
+        .message-error {
+            color: var(--error);
+            font-style: italic;
+        }
+
+        .welcome-message {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 20px;
+            font-size: 12px;
+        }
+
+        .typing-indicator {
+            color: var(--text-muted);
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        /* Input Area */
+        .input-area {
+            display: flex;
+            gap: 6px;
+            padding: 8px 12px;
+            background: var(--bg-header);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .input-area textarea {
+            flex: 1;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 13px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            min-height: 36px;
+            max-height: 80px;
+        }
+
+        .input-area textarea::placeholder { color: var(--text-muted); }
+
+        .input-area textarea:focus { border-color: var(--accent); }
+
+        .btn {
+            border: none;
+            border-radius: 6px;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+
+        .btn-send {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .btn-send:hover { background: var(--accent-hover); }
+        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Action Bar */
+        .action-bar {
+            display: flex;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-header);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .btn-action {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-action:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+
+        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .action-group { display: flex; gap: 6px; }
+
+        .btn-resolve {
+            border-color: #ff9800;
+            color: #ff9800;
+        }
+
+        .btn-resolve:hover {
+            background: #ff9800;
+            color: #fff;
+            border-color: #ff9800;
+        }
+
+        /* Time Entry Modal */
+        .time-stepper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 12px 0;
+        }
+
+        .time-stepper button {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .time-stepper button:hover { background: var(--accent); color: #fff; }
+
+        .time-display {
+            font-size: 20px;
+            font-weight: 600;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .modal-textarea {
+            width: 100%;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: inherit;
+            resize: none;
+            min-height: 60px;
+            margin: 8px 0;
+        }
+
+        /* Resolve Modal */
+        .resolve-modal { max-width: 95%; width: 500px; }
+
+        .resolve-status {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .email-preview {
+            width: 100%;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: inherit;
+            max-height: 300px;
+            min-height: 150px;
+            resize: vertical;
+            margin: 6px 0;
+            line-height: 1.4;
+        }
+
+
+        .btn-no-time {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 1000;
+            max-width: 90%;
+            text-align: center;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .toast-success { background: var(--success); color: #fff; }
+        .toast-error { background: var(--error); color: #fff; }
+
+        /* Confirmation Dialog */
+        .dialog-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 900;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .dialog-overlay.show { display: flex; }
+
+        .dialog {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            max-width: 300px;
+            width: 90%;
+        }
+
+        .dialog p {
+            font-size: 13px;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .dialog-buttons .btn {
+            padding: 6px 14px;
+            font-size: 12px;
+        }
+
+        .btn-cancel {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+        }
+
+        .btn-confirm {
+            background: var(--accent);
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    {% if error %}
+    <div class="header">
+        <span class="header-title">NTM AI Assistant</span>
+    </div>
+    <div class="error-banner">{{ error }}</div>
+    <div class="chat-area">
+        <div class="welcome-message">Unable to load ticket data. Please check the configuration and try refreshing.</div>
+    </div>
+    {% else %}
+    <div class="header">
+        <span class="header-title">NTM AI Assistant</span>
+        <div class="header-controls">
+            <select class="model-select" id="modelSelect">
+                {% for m in models %}
+                <option value="{{ m.id }}">{{ m.label }}</option>
+                {% endfor %}
+            </select>
+            <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#9681;</button>
+        </div>
+    </div>
+
+    <div class="context-bar" id="contextBar">
+        <div class="context-summary">
+            <strong>Ticket #{{ ticket.id }}:</strong> {{ ticket.summary[:80] }}
+            &nbsp;|&nbsp; {{ ticket.company_name }} &nbsp;|&nbsp; {{ ticket.priority }}
+        </div>
+        <div class="context-details" id="contextDetails">
+            <div><strong>Company:</strong> {{ ticket.company_name }}</div>
+            <div><strong>Contact:</strong> {{ ticket.contact_name }}</div>
+            <div><strong>Status:</strong> {{ ticket.status }}</div>
+            <div><strong>Board:</strong> {{ ticket.board }}</div>
+            <div><strong>Type:</strong> {{ ticket.type }} / {{ ticket.subtype }}</div>
+            <div><strong>Priority:</strong> {{ ticket.priority }}</div>
+            {% if ticket.owner_name %}
+            <div><strong>Owner:</strong> {{ ticket.owner_name }}</div>
+            {% endif %}
+            {% if ticket.initial_description %}
+            <div style="margin-top:4px"><strong>Description:</strong> {{ ticket.initial_description[:300] }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="chat-area" id="chatArea">
+        <div class="welcome-message">
+            Ask me anything about this ticket. I have the full context loaded.
+        </div>
+    </div>
+
+    <div class="input-area">
+        <textarea id="chatInput" placeholder="Type a message..." rows="1"></textarea>
+        <button class="btn btn-send" id="sendBtn">Send</button>
+    </div>
+
+    <div class="action-bar">
+        <div class="action-group">
+            <button class="btn-action btn-save" id="saveBtn" disabled>Save to Ticket</button>
+            <button class="btn-action btn-resolve" id="resolveBtn" disabled>Resolve</button>
+        </div>
+        <button class="btn-action btn-clear" id="clearBtn">Clear</button>
+    </div>
+
+    <!-- Confirmation Dialog -->
+    <div class="dialog-overlay" id="dialogOverlay">
+        <div class="dialog">
+            <p id="dialogMessage"></p>
+            <div class="dialog-buttons">
+                <button class="btn btn-cancel" id="dialogCancel">Cancel</button>
+                <button class="btn btn-confirm" id="dialogConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Time Entry Modal -->
+    <div class="dialog-overlay" id="timeModalOverlay">
+        <div class="dialog">
+            <p style="font-weight:600; margin-bottom:4px;">Log Time — Ticket #{{ ticket.id }}</p>
+            <div class="time-stepper">
+                <button id="timeMinus">-</button>
+                <span class="time-display" id="timeDisplay">0.25 hr</span>
+                <button id="timePlus">+</button>
+            </div>
+            <div class="dialog-buttons">
+                <button class="btn btn-no-time" id="timeSkip">No Time</button>
+                <button class="btn btn-confirm" id="timeSubmit">Save with Time</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resolve Modal -->
+    <div class="dialog-overlay" id="resolveModalOverlay">
+        <div class="dialog resolve-modal">
+            <p style="font-weight:600; margin-bottom:4px;">Resolve Ticket</p>
+            <p class="resolve-status" id="resolveStatus">Generating customer email draft...</p>
+            <div id="emailSection" style="display:none">
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Customer Email Draft (editable):</p>
+                <textarea class="email-preview" id="emailPreview" rows="10"></textarea>
+                <div class="dialog-buttons" style="margin-top:8px">
+                    <button class="btn btn-cancel" id="resolveSkipEmail">Don't Send</button>
+                    <button class="btn btn-confirm" id="resolveSendEmail">Send to Contact</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // --- Data from server ---
+        const TICKET = {{ ticket | tojson }};
+        const NOTES = {{ notes | tojson }};
+        const MODELS = {{ models | tojson }};
+        const DUPLICATES = {{ duplicates | tojson }};
+
+        // Extract token from URL so we can pass it on API calls
+        const POD_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+
+        // --- State ---
+        let messages = [];
+        let isStreaming = false;
+        let hasNewMessages = false;
+        let currentTimeHours = 0.25;
+
+        // --- Elements ---
+        const chatArea = document.getElementById('chatArea');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const resolveBtn = document.getElementById('resolveBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const themeToggle = document.getElementById('themeToggle');
+        const contextBar = document.getElementById('contextBar');
+        const contextDetails = document.getElementById('contextDetails');
+        const dialogOverlay = document.getElementById('dialogOverlay');
+        const dialogMessage = document.getElementById('dialogMessage');
+        const dialogCancel = document.getElementById('dialogCancel');
+        const dialogConfirm = document.getElementById('dialogConfirm');
+        const toast = document.getElementById('toast');
+        const timeModalOverlay = document.getElementById('timeModalOverlay');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const resolveModalOverlay = document.getElementById('resolveModalOverlay');
+        const resolveStatus = document.getElementById('resolveStatus');
+        const emailSection = document.getElementById('emailSection');
+        const emailPreview = document.getElementById('emailPreview');
+        const resolveClose = document.getElementById('resolveClose');
+
+        // --- Theme ---
+        const savedTheme = localStorage.getItem('cwpod-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        themeToggle.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('cwpod-theme', next);
+        });
+
+        // --- Context Bar Toggle ---
+        contextBar.addEventListener('click', () => {
+            contextDetails.classList.toggle('expanded');
+        });
+
+        // --- Markdown Renderer ---
+        function renderMarkdown(text) {
+            // Extract code blocks first, replace with placeholders
+            const codeBlocks = [];
+            text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+                const idx = codeBlocks.length;
+                codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
+                return `%%CODEBLOCK_${idx}%%`;
+            });
+            // Escape everything else to prevent XSS
+            text = escapeHtml(text);
+            // Restore code blocks
+            codeBlocks.forEach((block, idx) => {
+                text = text.replace(`%%CODEBLOCK_${idx}%%`, block);
+            });
+            // Inline code
+            text = text.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
+            // Bold
+            text = text.replace(/\*\*(.+?)\*\*/g, (_, bold) => `<strong>${bold}</strong>`);
+            // Unordered lists
+            text = text.replace(/^[\-\*] (.+)$/gm, (_, item) => `<li>${item}</li>`);
+            text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+            // Ordered lists
+            text = text.replace(/^\d+\. (.+)$/gm, (_, item) => `<li>${item}</li>`);
+            // Paragraphs
+            text = text.replace(/\n\n/g, '</p><p>');
+            text = text.replace(/\n/g, '<br>');
+            return `<p>${text}</p>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // --- Chat Functions ---
+        function addMessage(role, content, isError = false) {
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+
+            const div = document.createElement('div');
+            div.className = `message message-${role}`;
+
+            const label = document.createElement('div');
+            label.className = 'message-label';
+            label.textContent = role === 'user' ? 'You' : 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = `message-content${isError ? ' message-error' : ''}`;
+            contentDiv.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
+
+            div.appendChild(label);
+            div.appendChild(contentDiv);
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            return contentDiv;
+        }
+
+        function createStreamingMessage() {
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+
+            const div = document.createElement('div');
+            div.className = 'message message-assistant';
+
+            const label = document.createElement('div');
+            label.className = 'message-label';
+            label.textContent = 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = '<span class="typing-indicator">Thinking...</span>';
+
+            div.appendChild(label);
+            div.appendChild(contentDiv);
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            return contentDiv;
+        }
+
+        async function sendMessage() {
+            const text = chatInput.value.trim();
+            if (!text || isStreaming) return;
+
+            isStreaming = true;
+            sendBtn.disabled = true;
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+
+            messages.push({ role: 'user', content: text });
+            addMessage('user', text);
+
+            const contentDiv = createStreamingMessage();
+            let fullContent = '';
+            let started = false;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        messages: messages,
+                        model: modelSelect.value,
+                        ticket_context: { ...TICKET, notes: NOTES, duplicates: DUPLICATES },
+                    }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6).trim();
+                        if (!data) continue;
+
+                        try {
+                            const parsed = JSON.parse(data);
+
+                            if (parsed.error) {
+                                contentDiv.innerHTML = `<span class="message-error">${escapeHtml(parsed.error)}</span>`;
+                                break;
+                            }
+
+                            if (parsed.done) break;
+
+                            if (parsed.content) {
+                                if (!started) {
+                                    contentDiv.innerHTML = '';
+                                    started = true;
+                                }
+                                fullContent += parsed.content;
+                                contentDiv.innerHTML = renderMarkdown(fullContent);
+                                chatArea.scrollTop = chatArea.scrollHeight;
+                            }
+                        } catch (e) {
+                            // Skip unparseable lines
+                        }
+                    }
+                }
+
+                if (fullContent) {
+                    messages.push({ role: 'assistant', content: fullContent });
+                    hasNewMessages = true;
+                    saveBtn.disabled = false;
+                    resolveBtn.disabled = false;
+                } else if (!contentDiv.querySelector('.message-error')) {
+                    contentDiv.innerHTML = '<span class="message-error">[Response interrupted]</span>';
+                }
+
+            } catch (err) {
+                contentDiv.innerHTML = `<span class="message-error">Connection error — try again</span>`;
+            }
+
+            isStreaming = false;
+            sendBtn.disabled = false;
+            chatInput.focus();
+        }
+
+        // --- Save to Ticket ---
+        let dialogResolve = null;
+
+        function showDialog(message) {
+            return new Promise((resolve) => {
+                dialogMessage.textContent = message;
+                dialogOverlay.classList.add('show');
+                dialogResolve = resolve;
+            });
+        }
+
+        dialogCancel.addEventListener('click', () => {
+            dialogOverlay.classList.remove('show');
+            if (dialogResolve) dialogResolve(false);
+        });
+
+        dialogConfirm.addEventListener('click', () => {
+            dialogOverlay.classList.remove('show');
+            if (dialogResolve) dialogResolve(true);
+        });
+
+        function showToast(message, type = 'success') {
+            toast.textContent = message;
+            toast.className = `toast toast-${type} show`;
+            setTimeout(() => { toast.classList.remove('show'); }, 3000);
+        }
+
+        // --- Time Modal (shared by Save and Resolve) ---
+        let pendingAction = null; // 'save' or 'resolve'
+
+        function openTimeModal(action) {
+            pendingAction = action;
+            currentTimeHours = 0.25;
+            updateTimeDisplay();
+            timeModalOverlay.classList.add('show');
+        }
+
+        function updateTimeDisplay() {
+            timeDisplay.textContent = `${currentTimeHours.toFixed(2)} hr`;
+        }
+
+        document.getElementById('timePlus').addEventListener('click', () => {
+            if (currentTimeHours < 8.0) {
+                currentTimeHours = Math.round((currentTimeHours + 0.25) * 100) / 100;
+                updateTimeDisplay();
+            }
+        });
+
+        document.getElementById('timeMinus').addEventListener('click', () => {
+            if (currentTimeHours > 0.25) {
+                currentTimeHours = Math.round((currentTimeHours - 0.25) * 100) / 100;
+                updateTimeDisplay();
+            }
+        });
+
+        document.getElementById('timeSkip').addEventListener('click', () => {
+            timeModalOverlay.classList.remove('show');
+            _handleTimeChoice(0);
+        });
+
+        document.getElementById('timeSubmit').addEventListener('click', () => {
+            timeModalOverlay.classList.remove('show');
+            _handleTimeChoice(currentTimeHours);
+        });
+
+        function _handleTimeChoice(hours) {
+            if (pendingAction === 'save') {
+                _fireSave(hours);
+            } else if (pendingAction === 'resolve') {
+                // Save note + time using the same working path as Save
+                _fireSave(hours);
+                // Then generate the email
+                _fireResolveEmail();
+            }
+        }
+
+        // --- Save to Ticket ---
+        function saveToTicket() {
+            if (!hasNewMessages || messages.length === 0) return;
+            openTimeModal('save');
+        }
+
+        function _fireSave(hours) {
+            saveBtn.disabled = true;
+            resolveBtn.disabled = true;
+            saveBtn.textContent = 'Saved';
+            hasNewMessages = false;
+
+            try {
+                fetch('/save-note', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        messages: messages,
+                        model: modelSelect.value,
+                        actual_hours: hours,
+                    }),
+                });
+            } catch (err) { /* backend handles it */ }
+
+            const timeMsg = hours > 0 ? ` + ${hours.toFixed(2)} hr time entry` : '';
+            showToast(`Note${timeMsg} is being saved...`);
+        }
+
+        // --- Resolve ---
+        function resolveTicket() {
+            if (!hasNewMessages || messages.length === 0) return;
+            openTimeModal('resolve');
+        }
+
+        async function _fireResolveEmail() {
+            // Show email modal with loading state
+            resolveStatus.textContent = 'Generating customer email draft...';
+            emailSection.style.display = 'none';
+            resolveModalOverlay.classList.add('show');
+
+            try {
+                const response = await fetch('/resolve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        messages: messages,
+                        model: modelSelect.value,
+                    }),
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    resolveStatus.textContent = 'Resolution note saved. Review and edit the email below:';
+                    emailSection.style.display = 'block';
+                    emailPreview.value = data.customer_email;
+                } else {
+                    resolveStatus.textContent = data.error || 'Failed to generate email';
+                }
+            } catch (err) {
+                resolveStatus.textContent = 'Connection error — try again';
+            }
+        }
+
+        document.getElementById('resolveSkipEmail').addEventListener('click', () => {
+            resolveModalOverlay.classList.remove('show');
+            showToast('Resolution saved — no email sent');
+        });
+
+        document.getElementById('resolveSendEmail').addEventListener('click', async () => {
+            const btn = document.getElementById('resolveSendEmail');
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+
+            try {
+                const response = await fetch('/send-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        email_text: emailPreview.value,
+                    }),
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    resolveModalOverlay.classList.remove('show');
+                    showToast(data.message);
+                } else {
+                    showToast(data.error || 'Failed to send', 'error');
+                }
+            } catch (err) {
+                showToast('Connection error', 'error');
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Send to Contact';
+        });
+
+        // --- Clear Chat ---
+        async function clearChat() {
+            if (messages.length === 0) return;
+
+            const confirmed = await showDialog('Clear the chat? This cannot be undone.');
+            if (!confirmed) return;
+
+            messages = [];
+            hasNewMessages = false;
+            saveBtn.disabled = true;
+            resolveBtn.disabled = true;
+            chatArea.innerHTML = '<div class="welcome-message">Ask me anything about this ticket. I have the full context loaded.</div>';
+        }
+
+        // --- Duplicate Detection (show in chat on load) ---
+        if (DUPLICATES && DUPLICATES.length > 0) {
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+
+            let dupText = DUPLICATES.map(d => `#${d.id} ${d.summary} *(${d.status})*`).join('\n');
+            addMessage('assistant', dupText);
+        }
+
+        // --- Event Listeners ---
+        sendBtn.addEventListener('click', sendMessage);
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        chatInput.addEventListener('input', () => {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
+        });
+
+        saveBtn.addEventListener('click', saveToTicket);
+        resolveBtn.addEventListener('click', resolveTicket);
+        clearBtn.addEventListener('click', clearChat);
+    </script>
+    {% endif %}
+</body>
+</html>
