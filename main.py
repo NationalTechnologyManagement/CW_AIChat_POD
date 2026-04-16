@@ -23,6 +23,8 @@ POD_SECRET = os.getenv("POD_SECRET", "")
 if not POD_SECRET:
     raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
 
+CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
+
 ALLOWED_MODELS = {m["id"] for m in openrouter_client.MODELS}
 
 STOP_WORDS = {
@@ -152,41 +154,64 @@ def _extract_keywords(text: str) -> list[str]:
 
 
 async def _find_similar_tickets(ticket: dict, notes: list[dict]) -> list[dict]:
-    if not ticket.get("company_id"):
-        return []
+    from datetime import datetime, timedelta, timezone
+    six_months_ago = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
+    ticket_id = ticket["id"]
 
-    # Build keywords from summary + notes for smarter matching
+    # Build keyword filter from summary + notes
     all_text = ticket["summary"]
     for n in notes[:10]:
         all_text += " " + n.get("text", "")[:200]
-
     keywords = _extract_keywords(all_text)
-    if not keywords:
-        return []
-
-    # Use top 5 most relevant keywords for broader matching
     search_keywords = keywords[:5]
-    contains_clause = " or ".join(
-        f"summary contains '{word.replace(chr(39), chr(39)+chr(39))}'" for word in search_keywords
-    )
+    keyword_clause = " or ".join(
+        f"summary contains '{w.replace(chr(39), chr(39)+chr(39))}'" for w in search_keywords
+    ) if search_keywords else ""
 
-    # Search company tickets from last 6 months
-    from datetime import datetime, timedelta, timezone
-    six_months_ago = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
+    results = []
+    search_tier = None
 
-    condition = f"company/id={ticket['company_id']} and ({contains_clause}) and id != {ticket['id']} and dateEntered > [{six_months_ago}]"
-    results = await cw_client.search_tickets(condition)
+    # Tier 1: Contact's tickets (no keyword filter — show all their recent tickets)
+    contact_id = ticket.get("contact_id")
+    if contact_id:
+        try:
+            results = await cw_client.search_contact_tickets(contact_id, ticket_id, six_months_ago)
+            if results:
+                search_tier = "contact"
+        except Exception:
+            pass
+
+    # Tier 2: Company tickets filtered by keywords
+    if not results and ticket.get("company_id") and keyword_clause:
+        try:
+            results = await cw_client.search_company_tickets(
+                ticket["company_id"], ticket_id, six_months_ago, keyword_clause,
+            )
+            if results:
+                search_tier = "company"
+        except Exception:
+            pass
+
+    # Tier 3: All tickets filtered by keywords
+    if not results and keyword_clause:
+        try:
+            results = await cw_client.search_all_tickets(ticket_id, six_months_ago, keyword_clause)
+            if results:
+                search_tier = "all"
+        except Exception:
+            pass
 
     if not results:
         return []
 
-    # Enrich with notes (fetch in parallel)
+    # Enrich top 5 with notes (fetch in parallel)
     async def _enrich(dup):
         try:
             dup_notes = await cw_client.get_ticket_notes(dup["id"])
             dup["notes"] = dup_notes[:10]
         except Exception:
             dup["notes"] = []
+        dup["search_tier"] = search_tier
         return dup
 
     enriched = await asyncio.gather(*[_enrich(d) for d in results[:5]])
@@ -279,6 +304,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "notes": notes,
                 "duplicates": duplicates,
                 "models": openrouter_client.MODELS,
+                "cw_manage_url": CW_MANAGE_URL,
                 "error": None,
             },
         )
@@ -291,6 +317,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "notes": [],
                 "duplicates": [],
                 "models": openrouter_client.MODELS,
+                "cw_manage_url": CW_MANAGE_URL,
                 "error": "ConnectWise connection error — check API keys",
             },
         )
@@ -303,6 +330,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "notes": [],
                 "duplicates": [],
                 "models": openrouter_client.MODELS,
+                "cw_manage_url": CW_MANAGE_URL,
                 "error": f"Ticket #{ticketId} not found",
             },
         )
@@ -315,6 +343,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "notes": [],
                 "duplicates": [],
                 "models": openrouter_client.MODELS,
+                "cw_manage_url": CW_MANAGE_URL,
                 "error": f"Error loading ticket: {str(e)[:100]}",
             },
         )

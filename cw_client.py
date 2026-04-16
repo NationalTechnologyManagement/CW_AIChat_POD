@@ -139,6 +139,26 @@ async def search_tickets(conditions: str, page_size: int = 5) -> list[dict]:
     ]
 
 
+async def search_contact_tickets(contact_id: int, exclude_ticket_id: int, since_date: str, page_size: int = 5) -> list[dict]:
+    """Search tickets for a specific contact."""
+    conditions = f"contact/id={contact_id} and id != {exclude_ticket_id} and dateEntered > [{since_date}]"
+    return await search_tickets(conditions, page_size)
+
+
+async def search_company_tickets(company_id: int, exclude_ticket_id: int, since_date: str, keyword_conditions: str = "", page_size: int = 5) -> list[dict]:
+    """Search tickets for a specific company, optionally filtered by keywords."""
+    conditions = f"company/id={company_id} and id != {exclude_ticket_id} and dateEntered > [{since_date}]"
+    if keyword_conditions:
+        conditions += f" and ({keyword_conditions})"
+    return await search_tickets(conditions, page_size)
+
+
+async def search_all_tickets(exclude_ticket_id: int, since_date: str, keyword_conditions: str, page_size: int = 5) -> list[dict]:
+    """Search all tickets filtered by keywords."""
+    conditions = f"id != {exclude_ticket_id} and dateEntered > [{since_date}] and ({keyword_conditions})"
+    return await search_tickets(conditions, page_size)
+
+
 async def create_ticket_note(
     ticket_id: int,
     text: str,

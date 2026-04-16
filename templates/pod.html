@@ -1,53 +1,42 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NTM AI Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg-primary: #1a1a2e;
-            --bg-secondary: #16213e;
-            --bg-input: #0f3460;
-            --bg-message-user: #1a3a5c;
-            --bg-message-ai: #1e2a3a;
-            --bg-header: #0f0f23;
-            --bg-context: #12122a;
-            --text-primary: #e0e0e0;
-            --text-secondary: #a0a0b0;
-            --text-muted: #6a6a7a;
-            --accent: #4a9eff;
-            --accent-hover: #3a8eef;
-            --success: #4caf50;
-            --error: #ef5350;
-            --warning: #ff9800;
-            --border: #2a2a4a;
-            --scrollbar-track: #1a1a2e;
-            --scrollbar-thumb: #3a3a5a;
-        }
-
-        [data-theme="light"] {
-            --bg-primary: #f5f5f5;
-            --bg-secondary: #ffffff;
-            --bg-input: #e8e8e8;
-            --bg-message-user: #e3f2fd;
-            --bg-message-ai: #f5f5f5;
-            --bg-header: #ffffff;
-            --bg-context: #fafafa;
-            --text-primary: #212121;
-            --text-secondary: #555555;
-            --text-muted: #888888;
-            --accent: #1976d2;
-            --accent-hover: #1565c0;
-            --border: #e0e0e0;
-            --scrollbar-track: #f0f0f0;
-            --scrollbar-thumb: #c0c0c0;
-        }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-input: #f1f3f5;
+            --bg-message-user: #e7f0ff;
+            --bg-message-ai: #f8f9fa;
+            --bg-header: #ffffff;
+            --bg-context: #f8f9fa;
+            --text-primary: #1a1a1a;
+            --text-secondary: #495057;
+            --text-muted: #868e96;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --success: #16a34a;
+            --error: #dc2626;
+            --warning: #d97706;
+            --border: #e5e7eb;
+            --border-light: #f0f0f0;
+            --scrollbar-track: #f8f9fa;
+            --scrollbar-thumb: #d1d5db;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+            --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+            --radius: 8px;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             height: 600px;
@@ -56,6 +45,8 @@
             display: flex;
             flex-direction: column;
             font-size: 13px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
         }
 
         /* Header */
@@ -63,17 +54,18 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 6px 12px;
+            padding: 8px 16px;
             background: var(--bg-header);
             border-bottom: 1px solid var(--border);
-            min-height: 38px;
+            min-height: 42px;
             flex-shrink: 0;
         }
 
         .header-title {
             font-weight: 600;
-            font-size: 13px;
-            color: var(--accent);
+            font-size: 14px;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
         }
 
         .header-controls {
@@ -86,32 +78,29 @@
             background: var(--bg-input);
             color: var(--text-primary);
             border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 3px 6px;
-            font-size: 11px;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-family: 'Inter', sans-serif;
             cursor: pointer;
             outline: none;
+            transition: border-color 0.15s;
         }
 
-        .theme-toggle {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 14px;
-            padding: 2px;
-            line-height: 1;
-        }
+        .model-select:focus { border-color: var(--accent); }
 
         /* Context Bar */
         .context-bar {
-            padding: 6px 12px;
+            padding: 8px 16px;
             background: var(--bg-context);
             border-bottom: 1px solid var(--border);
             cursor: pointer;
             flex-shrink: 0;
             user-select: none;
+            transition: background 0.15s;
         }
+
+        .context-bar:hover { background: #f0f1f3; }
 
         .context-summary {
             font-size: 12px;
@@ -123,52 +112,53 @@
 
         .context-summary strong {
             color: var(--text-primary);
+            font-weight: 600;
         }
 
         .context-details {
             display: none;
-            margin-top: 6px;
-            font-size: 11px;
-            color: var(--text-muted);
-            line-height: 1.5;
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.6;
         }
 
         .context-details.expanded { display: block; }
 
+        .context-details div { padding: 1px 0; }
+
         /* Error Banner */
         .error-banner {
-            padding: 12px;
-            background: #2a1a1a;
-            border-bottom: 2px solid var(--error);
+            padding: 12px 16px;
+            background: #fef2f2;
+            border-bottom: 1px solid #fecaca;
             color: var(--error);
             text-align: center;
             font-size: 13px;
+            font-weight: 500;
             flex-shrink: 0;
-        }
-
-        [data-theme="light"] .error-banner {
-            background: #ffebee;
         }
 
         /* Chat Area */
         .chat-area {
             flex: 1;
             overflow-y: auto;
-            padding: 4px 10px;
+            padding: 8px 16px;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
         }
 
-        .chat-area::-webkit-scrollbar { width: 6px; }
-        .chat-area::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+        .chat-area::-webkit-scrollbar { width: 5px; }
+        .chat-area::-webkit-scrollbar-track { background: transparent; }
         .chat-area::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+        .chat-area::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
 
         .message {
-            padding: 4px 10px;
-            border-radius: 8px;
-            max-width: 90%;
-            line-height: 1.3;
+            padding: 8px 12px;
+            border-radius: var(--radius);
+            max-width: 88%;
+            line-height: 1.5;
             word-wrap: break-word;
         }
 
@@ -181,6 +171,7 @@
         .message-assistant {
             background: var(--bg-message-ai);
             align-self: flex-start;
+            border: 1px solid var(--border-light);
             border-bottom-left-radius: 2px;
         }
 
@@ -190,51 +181,55 @@
             color: var(--text-muted);
             margin-bottom: 3px;
             text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
 
-        .message-content { font-size: 13px; line-height: 1.3; }
+        .message-content { font-size: 13px; line-height: 1.5; }
 
-        .message-content p { margin-bottom: 1px; }
+        .message-content p { margin-bottom: 2px; }
         .message-content p:last-child { margin-bottom: 0; }
 
         .message-content code {
-            background: rgba(0,0,0,0.2);
-            padding: 1px 4px;
-            border-radius: 3px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
+            background: #f1f3f5;
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
             font-size: 12px;
-        }
-
-        [data-theme="light"] .message-content code {
-            background: rgba(0,0,0,0.06);
+            border: 1px solid var(--border-light);
         }
 
         .message-content pre {
-            background: rgba(0,0,0,0.3);
-            padding: 6px;
-            border-radius: 4px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
             overflow-x: auto;
-            margin: 4px 0;
-        }
-
-        [data-theme="light"] .message-content pre {
-            background: rgba(0,0,0,0.05);
+            margin: 6px 0;
+            border: 1px solid var(--border);
         }
 
         .message-content pre code {
             background: none;
             padding: 0;
             font-size: 12px;
+            border: none;
         }
 
         .message-content ul, .message-content ol {
-            padding-left: 16px;
-            margin: 2px 0;
+            padding-left: 18px;
+            margin: 4px 0;
         }
 
-        .message-content li { margin-bottom: 0; }
+        .message-content li { margin-bottom: 2px; }
 
         .message-content strong { font-weight: 600; }
+
+        .message-content a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .message-content a:hover { text-decoration: underline; }
 
         .message-error {
             color: var(--error);
@@ -244,8 +239,8 @@
         .welcome-message {
             text-align: center;
             color: var(--text-muted);
-            padding: 20px;
-            font-size: 12px;
+            padding: 24px 16px;
+            font-size: 13px;
         }
 
         .typing-indicator {
@@ -254,11 +249,63 @@
             font-size: 12px;
         }
 
+        /* Similar Tickets Panel */
+        .similar-tickets {
+            margin: 4px 0;
+            padding: 10px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 12px;
+        }
+
+        .similar-tickets-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .similar-ticket-item {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .similar-ticket-item:last-child { border-bottom: none; }
+
+        .similar-ticket-link {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .similar-ticket-link:hover { text-decoration: underline; }
+
+        .similar-ticket-summary {
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .similar-ticket-status {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
         /* Input Area */
         .input-area {
             display: flex;
-            gap: 6px;
-            padding: 8px 12px;
+            gap: 8px;
+            padding: 10px 16px;
             background: var(--bg-header);
             border-top: 1px solid var(--border);
             flex-shrink: 0;
@@ -269,14 +316,15 @@
             background: var(--bg-input);
             color: var(--text-primary);
             border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 8px 10px;
+            border-radius: var(--radius);
+            padding: 8px 12px;
             font-size: 13px;
-            font-family: inherit;
+            font-family: 'Inter', sans-serif;
             resize: none;
             outline: none;
-            min-height: 36px;
+            min-height: 38px;
             max-height: 80px;
+            transition: border-color 0.15s;
         }
 
         .input-area textarea::placeholder { color: var(--text-muted); }
@@ -285,12 +333,13 @@
 
         .btn {
             border: none;
-            border-radius: 6px;
-            padding: 8px 14px;
+            border-radius: var(--radius);
+            padding: 8px 16px;
             font-size: 12px;
             font-weight: 600;
+            font-family: 'Inter', sans-serif;
             cursor: pointer;
-            transition: background 0.15s;
+            transition: all 0.15s;
             white-space: nowrap;
         }
 
@@ -300,25 +349,29 @@
         }
 
         .btn-send:hover { background: var(--accent-hover); }
-        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
         /* Action Bar */
         .action-bar {
             display: flex;
+            justify-content: space-between;
+            align-items: center;
             gap: 8px;
-            padding: 6px 12px;
+            padding: 8px 16px;
             background: var(--bg-header);
             border-top: 1px solid var(--border);
             flex-shrink: 0;
         }
 
         .btn-action {
-            background: var(--bg-input);
+            background: var(--bg-primary);
             color: var(--text-secondary);
             border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 5px 10px;
+            border-radius: 6px;
+            padding: 6px 12px;
             font-size: 11px;
+            font-weight: 500;
+            font-family: 'Inter', sans-serif;
             cursor: pointer;
             transition: all 0.15s;
         }
@@ -329,19 +382,19 @@
             border-color: var(--accent);
         }
 
-        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .action-group { display: flex; gap: 6px; }
 
         .btn-resolve {
-            border-color: #ff9800;
-            color: #ff9800;
+            border-color: var(--warning);
+            color: var(--warning);
         }
 
         .btn-resolve:hover {
-            background: #ff9800;
+            background: var(--warning);
             color: #fff;
-            border-color: #ff9800;
+            border-color: var(--warning);
         }
 
         /* Time Entry Modal */
@@ -349,28 +402,34 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 12px;
-            margin: 12px 0;
+            gap: 16px;
+            margin: 14px 0;
         }
 
         .time-stepper button {
-            width: 32px;
-            height: 32px;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
             border: 1px solid var(--border);
             background: var(--bg-input);
             color: var(--text-primary);
             font-size: 16px;
+            font-weight: 500;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
+            transition: all 0.15s;
         }
 
-        .time-stepper button:hover { background: var(--accent); color: #fff; }
+        .time-stepper button:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
 
         .time-display {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 600;
             min-width: 80px;
             text-align: center;
@@ -381,10 +440,10 @@
             background: var(--bg-input);
             color: var(--text-primary);
             border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 8px;
+            border-radius: 6px;
+            padding: 8px 10px;
             font-size: 12px;
-            font-family: inherit;
+            font-family: 'Inter', sans-serif;
             resize: none;
             min-height: 60px;
             margin: 8px 0;
@@ -404,17 +463,16 @@
             background: var(--bg-input);
             color: var(--text-primary);
             border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 8px;
+            border-radius: 6px;
+            padding: 10px;
             font-size: 12px;
-            font-family: inherit;
+            font-family: 'Inter', sans-serif;
             max-height: 300px;
             min-height: 150px;
             resize: vertical;
             margin: 6px 0;
-            line-height: 1.4;
+            line-height: 1.5;
         }
-
 
         .btn-no-time {
             background: var(--bg-input);
@@ -427,14 +485,16 @@
             bottom: 60px;
             left: 50%;
             transform: translateX(-50%) translateY(20px);
-            padding: 8px 16px;
-            border-radius: 6px;
+            padding: 10px 20px;
+            border-radius: var(--radius);
             font-size: 12px;
+            font-weight: 500;
             opacity: 0;
             transition: all 0.3s;
             z-index: 1000;
             max-width: 90%;
             text-align: center;
+            box-shadow: var(--shadow-md);
         }
 
         .toast.show {
@@ -450,7 +510,7 @@
             display: none;
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0,0,0,0.3);
             z-index: 900;
             align-items: center;
             justify-content: center;
@@ -459,18 +519,19 @@
         .dialog-overlay.show { display: flex; }
 
         .dialog {
-            background: var(--bg-secondary);
+            background: var(--bg-primary);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px;
-            max-width: 300px;
+            border-radius: 12px;
+            padding: 20px;
+            max-width: 320px;
             width: 90%;
+            box-shadow: var(--shadow-md);
         }
 
         .dialog p {
             font-size: 13px;
-            margin-bottom: 12px;
-            line-height: 1.4;
+            margin-bottom: 14px;
+            line-height: 1.5;
         }
 
         .dialog-buttons {
@@ -480,7 +541,7 @@
         }
 
         .dialog-buttons .btn {
-            padding: 6px 14px;
+            padding: 7px 16px;
             font-size: 12px;
         }
 
@@ -489,9 +550,17 @@
             color: var(--text-secondary);
         }
 
+        .btn-cancel:hover {
+            background: #e5e7eb;
+        }
+
         .btn-confirm {
             background: var(--accent);
             color: #fff;
+        }
+
+        .btn-confirm:hover {
+            background: var(--accent-hover);
         }
     </style>
 </head>
@@ -513,7 +582,6 @@
                 <option value="{{ m.id }}">{{ m.label }}</option>
                 {% endfor %}
             </select>
-            <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#9681;</button>
         </div>
     </div>
 
@@ -571,9 +639,9 @@
     <!-- Time Entry Modal -->
     <div class="dialog-overlay" id="timeModalOverlay">
         <div class="dialog">
-            <p style="font-weight:600; margin-bottom:4px;">Log Time — Ticket #{{ ticket.id }}</p>
+            <p style="font-weight:600; margin-bottom:4px;">Log Time &mdash; Ticket #{{ ticket.id }}</p>
             <div class="time-stepper">
-                <button id="timeMinus">-</button>
+                <button id="timeMinus">&minus;</button>
                 <span class="time-display" id="timeDisplay">0.25 hr</span>
                 <button id="timePlus">+</button>
             </div>
@@ -609,6 +677,7 @@
         const NOTES = {{ notes | tojson }};
         const MODELS = {{ models | tojson }};
         const DUPLICATES = {{ duplicates | tojson }};
+        const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
 
         // Extract token from URL so we can pass it on API calls
         const POD_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
@@ -627,7 +696,6 @@
         const resolveBtn = document.getElementById('resolveBtn');
         const clearBtn = document.getElementById('clearBtn');
         const modelSelect = document.getElementById('modelSelect');
-        const themeToggle = document.getElementById('themeToggle');
         const contextBar = document.getElementById('contextBar');
         const contextDetails = document.getElementById('contextDetails');
         const dialogOverlay = document.getElementById('dialogOverlay');
@@ -641,18 +709,11 @@
         const resolveStatus = document.getElementById('resolveStatus');
         const emailSection = document.getElementById('emailSection');
         const emailPreview = document.getElementById('emailPreview');
-        const resolveClose = document.getElementById('resolveClose');
 
-        // --- Theme ---
-        const savedTheme = localStorage.getItem('cwpod-theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', savedTheme);
-
-        themeToggle.addEventListener('click', () => {
-            const current = document.documentElement.getAttribute('data-theme');
-            const next = current === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', next);
-            localStorage.setItem('cwpod-theme', next);
-        });
+        // --- Helpers ---
+        function ticketUrl(ticketId) {
+            return CW_MANAGE_URL + '/v4_6_release/services/system_io/Service/fv_sr100_request.rails?service_recid=' + ticketId + '&companyName=ntm';
+        }
 
         // --- Context Bar Toggle ---
         contextBar.addEventListener('click', () => {
@@ -661,32 +722,28 @@
 
         // --- Markdown Renderer ---
         function renderMarkdown(text) {
-            // Extract code blocks first, replace with placeholders
             const codeBlocks = [];
             text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
                 const idx = codeBlocks.length;
-                codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
-                return `%%CODEBLOCK_${idx}%%`;
+                codeBlocks.push('<pre><code>' + escapeHtml(code.trim()) + '</code></pre>');
+                return '%%CODEBLOCK_' + idx + '%%';
             });
-            // Escape everything else to prevent XSS
             text = escapeHtml(text);
-            // Restore code blocks
             codeBlocks.forEach((block, idx) => {
-                text = text.replace(`%%CODEBLOCK_${idx}%%`, block);
+                text = text.replace('%%CODEBLOCK_' + idx + '%%', block);
             });
-            // Inline code
-            text = text.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
-            // Bold
-            text = text.replace(/\*\*(.+?)\*\*/g, (_, bold) => `<strong>${bold}</strong>`);
-            // Unordered lists
-            text = text.replace(/^[\-\*] (.+)$/gm, (_, item) => `<li>${item}</li>`);
+            text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
+            text = text.replace(/\*\*(.+?)\*\*/g, (_, bold) => '<strong>' + bold + '</strong>');
+            text = text.replace(/^[\-\*] (.+)$/gm, (_, item) => '<li>' + item + '</li>');
             text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-            // Ordered lists
-            text = text.replace(/^\d+\. (.+)$/gm, (_, item) => `<li>${item}</li>`);
-            // Paragraphs
+            text = text.replace(/^\d+\. (.+)$/gm, (_, item) => '<li>' + item + '</li>');
+            // Linkify ticket references like #12345
+            text = text.replace(/#(\d{4,})/g, (match, id) => {
+                return '<a href="' + ticketUrl(id) + '" target="_blank" rel="noopener">#' + id + '</a>';
+            });
             text = text.replace(/\n\n/g, '</p><p>');
             text = text.replace(/\n/g, '<br>');
-            return `<p>${text}</p>`;
+            return '<p>' + text + '</p>';
         }
 
         function escapeHtml(text) {
@@ -696,19 +753,20 @@
         }
 
         // --- Chat Functions ---
-        function addMessage(role, content, isError = false) {
+        function addMessage(role, content, isError) {
+            isError = isError || false;
             const welcome = chatArea.querySelector('.welcome-message');
             if (welcome) welcome.remove();
 
             const div = document.createElement('div');
-            div.className = `message message-${role}`;
+            div.className = 'message message-' + role;
 
             const label = document.createElement('div');
             label.className = 'message-label';
             label.textContent = role === 'user' ? 'You' : 'AI';
 
             const contentDiv = document.createElement('div');
-            contentDiv.className = `message-content${isError ? ' message-error' : ''}`;
+            contentDiv.className = 'message-content' + (isError ? ' message-error' : '');
             contentDiv.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
 
             div.appendChild(label);
@@ -742,6 +800,58 @@
             return contentDiv;
         }
 
+        // --- Similar Tickets Panel ---
+        function renderSimilarTickets() {
+            if (!DUPLICATES || DUPLICATES.length === 0) return;
+
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+
+            const panel = document.createElement('div');
+            panel.className = 'similar-tickets';
+
+            const tier = DUPLICATES[0].search_tier || 'related';
+            const tierLabels = {
+                contact: 'Previous tickets from this contact',
+                company: 'Similar tickets from this company',
+                all: 'Similar tickets across all companies',
+            };
+            const title = document.createElement('div');
+            title.className = 'similar-tickets-title';
+            title.textContent = tierLabels[tier] || 'Related Tickets';
+            panel.appendChild(title);
+
+            DUPLICATES.forEach(function(d) {
+                const item = document.createElement('div');
+                item.className = 'similar-ticket-item';
+
+                const link = document.createElement('a');
+                link.className = 'similar-ticket-link';
+                link.href = ticketUrl(d.id);
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.textContent = '#' + d.id;
+
+                const summary = document.createElement('span');
+                summary.className = 'similar-ticket-summary';
+                summary.textContent = d.summary;
+
+                const status = document.createElement('span');
+                status.className = 'similar-ticket-status';
+                status.textContent = d.status;
+
+                item.appendChild(link);
+                item.appendChild(summary);
+                item.appendChild(status);
+                panel.appendChild(item);
+            });
+
+            chatArea.appendChild(panel);
+        }
+
+        renderSimilarTickets();
+
+        // --- Send Message ---
         async function sendMessage() {
             const text = chatInput.value.trim();
             if (!text || isStreaming) return;
@@ -766,7 +876,7 @@
                         ticket_id: TICKET.id,
                         messages: messages,
                         model: modelSelect.value,
-                        ticket_context: { ...TICKET, notes: NOTES, duplicates: DUPLICATES },
+                        ticket_context: Object.assign({}, TICKET, { notes: NOTES, duplicates: DUPLICATES }),
                     }),
                 });
 
@@ -791,7 +901,7 @@
                             const parsed = JSON.parse(data);
 
                             if (parsed.error) {
-                                contentDiv.innerHTML = `<span class="message-error">${escapeHtml(parsed.error)}</span>`;
+                                contentDiv.innerHTML = '<span class="message-error">' + escapeHtml(parsed.error) + '</span>';
                                 break;
                             }
 
@@ -806,9 +916,7 @@
                                 contentDiv.innerHTML = renderMarkdown(fullContent);
                                 chatArea.scrollTop = chatArea.scrollHeight;
                             }
-                        } catch (e) {
-                            // Skip unparseable lines
-                        }
+                        } catch (e) {}
                     }
                 }
 
@@ -822,7 +930,7 @@
                 }
 
             } catch (err) {
-                contentDiv.innerHTML = `<span class="message-error">Connection error — try again</span>`;
+                contentDiv.innerHTML = '<span class="message-error">Connection error &mdash; try again</span>';
             }
 
             isStreaming = false;
@@ -834,31 +942,32 @@
         let dialogResolve = null;
 
         function showDialog(message) {
-            return new Promise((resolve) => {
+            return new Promise(function(resolve) {
                 dialogMessage.textContent = message;
                 dialogOverlay.classList.add('show');
                 dialogResolve = resolve;
             });
         }
 
-        dialogCancel.addEventListener('click', () => {
+        dialogCancel.addEventListener('click', function() {
             dialogOverlay.classList.remove('show');
             if (dialogResolve) dialogResolve(false);
         });
 
-        dialogConfirm.addEventListener('click', () => {
+        dialogConfirm.addEventListener('click', function() {
             dialogOverlay.classList.remove('show');
             if (dialogResolve) dialogResolve(true);
         });
 
-        function showToast(message, type = 'success') {
+        function showToast(message, type) {
+            type = type || 'success';
             toast.textContent = message;
-            toast.className = `toast toast-${type} show`;
-            setTimeout(() => { toast.classList.remove('show'); }, 3000);
+            toast.className = 'toast toast-' + type + ' show';
+            setTimeout(function() { toast.classList.remove('show'); }, 3000);
         }
 
-        // --- Time Modal (shared by Save and Resolve) ---
-        let pendingAction = null; // 'save' or 'resolve'
+        // --- Time Modal ---
+        let pendingAction = null;
 
         function openTimeModal(action) {
             pendingAction = action;
@@ -868,51 +977,49 @@
         }
 
         function updateTimeDisplay() {
-            timeDisplay.textContent = `${currentTimeHours.toFixed(2)} hr`;
+            timeDisplay.textContent = currentTimeHours.toFixed(2) + ' hr';
         }
 
-        document.getElementById('timePlus').addEventListener('click', () => {
+        document.getElementById('timePlus').addEventListener('click', function() {
             if (currentTimeHours < 8.0) {
                 currentTimeHours = Math.round((currentTimeHours + 0.25) * 100) / 100;
                 updateTimeDisplay();
             }
         });
 
-        document.getElementById('timeMinus').addEventListener('click', () => {
+        document.getElementById('timeMinus').addEventListener('click', function() {
             if (currentTimeHours > 0.25) {
                 currentTimeHours = Math.round((currentTimeHours - 0.25) * 100) / 100;
                 updateTimeDisplay();
             }
         });
 
-        document.getElementById('timeSkip').addEventListener('click', () => {
+        document.getElementById('timeSkip').addEventListener('click', function() {
             timeModalOverlay.classList.remove('show');
-            _handleTimeChoice(0);
+            handleTimeChoice(0);
         });
 
-        document.getElementById('timeSubmit').addEventListener('click', () => {
+        document.getElementById('timeSubmit').addEventListener('click', function() {
             timeModalOverlay.classList.remove('show');
-            _handleTimeChoice(currentTimeHours);
+            handleTimeChoice(currentTimeHours);
         });
 
-        function _handleTimeChoice(hours) {
+        function handleTimeChoice(hours) {
             if (pendingAction === 'save') {
-                _fireSave(hours);
+                fireSave(hours);
             } else if (pendingAction === 'resolve') {
-                // Save note + time using the same working path as Save
-                _fireSave(hours);
-                // Then generate the email
-                _fireResolveEmail();
+                fireSave(hours);
+                fireResolveEmail();
             }
         }
 
-        // --- Save to Ticket ---
+        // --- Save ---
         function saveToTicket() {
             if (!hasNewMessages || messages.length === 0) return;
             openTimeModal('save');
         }
 
-        function _fireSave(hours) {
+        function fireSave(hours) {
             saveBtn.disabled = true;
             resolveBtn.disabled = true;
             saveBtn.textContent = 'Saved';
@@ -929,10 +1036,10 @@
                         actual_hours: hours,
                     }),
                 });
-            } catch (err) { /* backend handles it */ }
+            } catch (err) {}
 
-            const timeMsg = hours > 0 ? ` + ${hours.toFixed(2)} hr time entry` : '';
-            showToast(`Note${timeMsg} is being saved...`);
+            var timeMsg = hours > 0 ? ' + ' + hours.toFixed(2) + ' hr time entry' : '';
+            showToast('Note' + timeMsg + ' is being saved...');
         }
 
         // --- Resolve ---
@@ -941,8 +1048,7 @@
             openTimeModal('resolve');
         }
 
-        async function _fireResolveEmail() {
-            // Show email modal with loading state
+        async function fireResolveEmail() {
             resolveStatus.textContent = 'Generating customer email draft...';
             emailSection.style.display = 'none';
             resolveModalOverlay.classList.add('show');
@@ -971,12 +1077,12 @@
             }
         }
 
-        document.getElementById('resolveSkipEmail').addEventListener('click', () => {
+        document.getElementById('resolveSkipEmail').addEventListener('click', function() {
             resolveModalOverlay.classList.remove('show');
             showToast('Resolution saved — no email sent');
         });
 
-        document.getElementById('resolveSendEmail').addEventListener('click', async () => {
+        document.getElementById('resolveSendEmail').addEventListener('click', async function() {
             const btn = document.getElementById('resolveSendEmail');
             btn.disabled = true;
             btn.textContent = 'Sending...';
@@ -1017,29 +1123,21 @@
             hasNewMessages = false;
             saveBtn.disabled = true;
             resolveBtn.disabled = true;
+            saveBtn.textContent = 'Save to Ticket';
             chatArea.innerHTML = '<div class="welcome-message">Ask me anything about this ticket. I have the full context loaded.</div>';
-        }
-
-        // --- Duplicate Detection (show in chat on load) ---
-        if (DUPLICATES && DUPLICATES.length > 0) {
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
-
-            let dupText = DUPLICATES.map(d => `#${d.id} ${d.summary} *(${d.status})*`).join('\n');
-            addMessage('assistant', dupText);
         }
 
         // --- Event Listeners ---
         sendBtn.addEventListener('click', sendMessage);
 
-        chatInput.addEventListener('keydown', (e) => {
+        chatInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
             }
         });
 
-        chatInput.addEventListener('input', () => {
+        chatInput.addEventListener('input', function() {
             chatInput.style.height = 'auto';
             chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
         });
