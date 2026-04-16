@@ -677,6 +677,7 @@
         const NOTES = {{ notes | tojson }};
         const MODELS = {{ models | tojson }};
         const DUPLICATES = {{ duplicates | tojson }};
+        const SAVED_MESSAGES = {{ saved_messages | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
 
         // Extract token from URL so we can pass it on API calls
@@ -851,6 +852,17 @@
 
         renderSimilarTickets();
 
+        // --- Load Saved Messages ---
+        if (SAVED_MESSAGES && SAVED_MESSAGES.length > 0) {
+            SAVED_MESSAGES.forEach(function(m) {
+                messages.push({ role: m.role, content: m.content });
+                addMessage(m.role, m.content);
+            });
+            hasNewMessages = true;
+            saveBtn.disabled = false;
+            resolveBtn.disabled = false;
+        }
+
         // --- Send Message ---
         async function sendMessage() {
             const text = chatInput.value.trim();
@@ -925,6 +937,19 @@
                     hasNewMessages = true;
                     saveBtn.disabled = false;
                     resolveBtn.disabled = false;
+
+                    // Persist the exchange to DB (fire and forget)
+                    fetch('/messages/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                        body: JSON.stringify({
+                            ticket_id: TICKET.id,
+                            messages: [
+                                { role: 'user', content: text },
+                                { role: 'assistant', content: fullContent },
+                            ],
+                        }),
+                    }).catch(function() {});
                 } else if (!contentDiv.querySelector('.message-error')) {
                     contentDiv.innerHTML = '<span class="message-error">[Response interrupted]</span>';
                 }
@@ -1116,8 +1141,15 @@
         async function clearChat() {
             if (messages.length === 0) return;
 
-            const confirmed = await showDialog('Clear the chat? This cannot be undone.');
+            const confirmed = await showDialog('Clear the chat? This will permanently delete the conversation for all techs.');
             if (!confirmed) return;
+
+            // Delete from DB
+            fetch('/messages/clear', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                body: JSON.stringify({ ticket_id: TICKET.id }),
+            }).catch(function() {});
 
             messages = [];
             hasNewMessages = false;

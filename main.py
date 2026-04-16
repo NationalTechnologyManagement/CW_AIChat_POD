@@ -1,8 +1,11 @@
 import asyncio
 import hmac
 import os
-import re
+import sys
 from contextlib import asynccontextmanager
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
 
@@ -16,6 +19,7 @@ from pydantic import BaseModel, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 import cw_client
+import db
 import openrouter_client
 from cw_client import CWAuthError, CWNotFoundError, CWAPIError
 
@@ -27,24 +31,14 @@ CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 
 ALLOWED_MODELS = {m["id"] for m in openrouter_client.MODELS}
 
-STOP_WORDS = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "can", "shall", "to", "of", "in", "for",
-    "on", "with", "at", "by", "from", "as", "into", "through", "during",
-    "before", "after", "above", "below", "between", "out", "off", "over",
-    "under", "again", "further", "then", "once", "and", "but", "or", "nor",
-    "not", "no", "so", "if", "up", "down", "it", "its", "he", "she",
-    "they", "we", "you", "me", "him", "her", "us", "them", "my", "your",
-    "his", "our", "their", "this", "that", "these", "those", "i", "am",
-    "new", "set", "get", "all", "any", "per", "via",
-}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cw_client.init_client()
+    await db.init_pool()
     yield
+    await db.close_pool()
     await cw_client.close_client()
 
 
@@ -88,7 +82,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
-    model: str = "anthropic/claude-sonnet-4"
+    model: str = "anthropic/claude-haiku-4.5"
     ticket_context: dict = {}
 
     @field_validator("model")
@@ -102,7 +96,7 @@ class ChatRequest(BaseModel):
 class SaveNoteRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
-    model: str = "anthropic/claude-sonnet-4"
+    model: str = "anthropic/claude-haiku-4.5"
     actual_hours: float = 0
 
     @field_validator("model")
@@ -127,7 +121,7 @@ class SaveNoteRequest(BaseModel):
 class ResolveRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
-    model: str = "anthropic/claude-sonnet-4"
+    model: str = "anthropic/claude-haiku-4.5"
 
     @field_validator("model")
     @classmethod
@@ -140,17 +134,12 @@ class ResolveRequest(BaseModel):
 # --- Helpers ---
 
 
-def _extract_keywords(text: str) -> list[str]:
-    words = re.findall(r"[a-zA-Z0-9]+", text.lower())
-    keywords = [w for w in words if len(w) >= 3 and w not in STOP_WORDS]
-    # Deduplicate while preserving order
-    seen = set()
-    unique = []
-    for w in keywords:
-        if w not in seen:
-            seen.add(w)
-            unique.append(w)
-    return unique
+def _build_keyword_clause(keywords: list[str], operator: str = "and") -> str:
+    """Build a CW API conditions clause from keywords."""
+    if not keywords:
+        return ""
+    parts = [f"summary contains '{w.replace(chr(39), chr(39)+chr(39))}'" for w in keywords]
+    return f" {operator} ".join(parts)
 
 
 async def _find_similar_tickets(ticket: dict, notes: list[dict]) -> list[dict]:
@@ -158,31 +147,34 @@ async def _find_similar_tickets(ticket: dict, notes: list[dict]) -> list[dict]:
     six_months_ago = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
     ticket_id = ticket["id"]
 
-    # Build keyword filter from summary + notes
-    all_text = ticket["summary"]
-    for n in notes[:10]:
-        all_text += " " + n.get("text", "")[:200]
-    keywords = _extract_keywords(all_text)
-    search_keywords = keywords[:5]
-    keyword_clause = " or ".join(
-        f"summary contains '{w.replace(chr(39), chr(39)+chr(39))}'" for w in search_keywords
-    ) if search_keywords else ""
+    # Use AI to extract the core technical keywords (Haiku — fast, ~$0.0001/call)
+    try:
+        keywords = await openrouter_client.extract_search_keywords(ticket["summary"])
+    except Exception:
+        keywords = []
+
+    if not keywords:
+        return []
+
+    keyword_clause = _build_keyword_clause(keywords, "or")
 
     results = []
     search_tier = None
 
-    # Tier 1: Contact's tickets (no keyword filter — show all their recent tickets)
+    # Tier 1: Contact's tickets filtered by topic keywords
     contact_id = ticket.get("contact_id")
     if contact_id:
         try:
-            results = await cw_client.search_contact_tickets(contact_id, ticket_id, six_months_ago)
+            results = await cw_client.search_contact_tickets(
+                contact_id, ticket_id, six_months_ago, keyword_clause,
+            )
             if results:
                 search_tier = "contact"
         except Exception:
             pass
 
-    # Tier 2: Company tickets filtered by keywords
-    if not results and ticket.get("company_id") and keyword_clause:
+    # Tier 2: Company tickets filtered by topic keywords
+    if not results and ticket.get("company_id"):
         try:
             results = await cw_client.search_company_tickets(
                 ticket["company_id"], ticket_id, six_months_ago, keyword_clause,
@@ -192,8 +184,8 @@ async def _find_similar_tickets(ticket: dict, notes: list[dict]) -> list[dict]:
         except Exception:
             pass
 
-    # Tier 3: All tickets filtered by keywords
-    if not results and keyword_clause:
+    # Tier 3: All tickets filtered by topic keywords
+    if not results:
         try:
             results = await cw_client.search_all_tickets(ticket_id, six_months_ago, keyword_clause)
             if results:
@@ -284,9 +276,10 @@ async def health():
 @app.get("/pod", response_class=HTMLResponse)
 async def pod(request: Request, ticketId: int = Query(...)):
     try:
-        ticket, notes = await asyncio.gather(
+        ticket, notes, saved_messages = await asyncio.gather(
             cw_client.get_ticket(ticketId),
             cw_client.get_ticket_notes(ticketId),
+            db.get_messages(ticketId),
         )
 
         # Similar ticket search — non-critical
@@ -303,6 +296,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "ticket": ticket,
                 "notes": notes,
                 "duplicates": duplicates,
+                "saved_messages": saved_messages,
                 "models": openrouter_client.MODELS,
                 "cw_manage_url": CW_MANAGE_URL,
                 "error": None,
@@ -494,3 +488,28 @@ async def send_email(request: SendEmailRequest):
             status_code=500,
             content={"success": False, "error": f"Failed to send: {str(e)[:100]}"},
         )
+
+
+# --- Chat Persistence ---
+
+
+class SaveMessagesRequest(BaseModel):
+    ticket_id: int
+    messages: list[ChatMessage]
+
+
+@app.post("/messages/save")
+async def save_messages(request: SaveMessagesRequest):
+    for msg in request.messages:
+        await db.save_message(request.ticket_id, msg.role, msg.content)
+    return {"success": True}
+
+
+class ClearMessagesRequest(BaseModel):
+    ticket_id: int
+
+
+@app.post("/messages/clear")
+async def clear_messages(request: ClearMessagesRequest):
+    deleted = await db.clear_messages(request.ticket_id)
+    return {"success": True, "deleted": deleted}

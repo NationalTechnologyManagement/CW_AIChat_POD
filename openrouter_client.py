@@ -8,8 +8,8 @@ import httpx
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODELS = [
+    {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5"},
     {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4"},
-    {"id": "anthropic/claude-3.5-haiku", "label": "Claude Haiku 3.5"},
     {"id": "openai/gpt-4o", "label": "GPT-4o"},
     {"id": "openai/gpt-4o-mini", "label": "GPT-4o Mini"},
     {"id": "google/gemini-2.5-flash-preview", "label": "Gemini 2.5 Flash"},
@@ -143,6 +143,32 @@ async def _call_openrouter(system_prompt: str, user_content: str, model: str, ma
         response.raise_for_status()
         data = response.json()
         return data["choices"][0]["message"]["content"]
+
+
+async def extract_search_keywords(ticket_summary: str) -> list[str]:
+    """Extract 2-4 technical search keywords from a ticket summary using Haiku (cheap + fast)."""
+    result = await _call_openrouter(
+        system_prompt=(
+            "Extract the core technical keywords from this IT support ticket summary. "
+            "Return ONLY a comma-separated list of 2-4 specific technical terms that describe the issue. "
+            "Focus on: device types, software names, error types, specific symptoms. "
+            "Exclude: company names, locations, people names, generic words like 'issue' or 'problem'.\n"
+            "Examples:\n"
+            "- 'BLEZ | Intermittent Scanner Issues at The Crossing' → scanner, intermittent, scanning\n"
+            "- 'Need to quote updated firewall for Grace' → firewall\n"
+            "- 'Outlook keeps crashing when opening attachments' → outlook, crashing, attachments\n"
+            "- 'VPN disconnects randomly throughout the day' → vpn, disconnects\n"
+            "Reply with ONLY the comma-separated keywords, nothing else."
+        ),
+        user_content=ticket_summary,
+        model="anthropic/claude-haiku-4.5",
+        max_tokens=50,
+        temperature=0,
+    )
+    # Parse comma-separated response into clean keyword list
+    keywords = [k.strip().lower() for k in result.split(",") if k.strip()]
+    # Filter out anything too short or suspiciously long (not a keyword)
+    return [k for k in keywords if 2 < len(k) < 30]
 
 
 async def generate_resolution_note(messages: list[dict], model: str) -> str:
