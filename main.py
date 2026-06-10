@@ -74,9 +74,39 @@ async def auth_and_headers(request: Request, call_next):
 # --- Models ---
 
 
+# Image attachments arrive as OpenAI-style content parts; data URLs only,
+# so the server never fetches remote images on a user's behalf.
+MAX_IMAGE_DATA_LEN = 8_000_000  # ~6MB of image as base64
+MAX_IMAGES_PER_MESSAGE = 4
+
+
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: str | list[dict]
+
+    @field_validator("content")
+    @classmethod
+    def content_must_be_valid(cls, v):
+        if isinstance(v, str):
+            return v
+        image_count = 0
+        for part in v:
+            ptype = part.get("type")
+            if ptype == "text":
+                if not isinstance(part.get("text"), str):
+                    raise ValueError("Text part must contain a string")
+            elif ptype == "image_url":
+                url = (part.get("image_url") or {}).get("url", "")
+                if not isinstance(url, str) or not url.startswith("data:image/"):
+                    raise ValueError("Images must be data:image/ URLs")
+                if len(url) > MAX_IMAGE_DATA_LEN:
+                    raise ValueError("Image too large (max ~6MB)")
+                image_count += 1
+            else:
+                raise ValueError(f"Unsupported content part type: {ptype}")
+        if image_count > MAX_IMAGES_PER_MESSAGE:
+            raise ValueError(f"Max {MAX_IMAGES_PER_MESSAGE} images per message")
+        return v
 
 
 class ChatRequest(BaseModel):
@@ -120,14 +150,26 @@ class SaveNoteRequest(BaseModel):
 
 class ResolveRequest(BaseModel):
     ticket_id: int
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = []
     model: str = "anthropic/claude-haiku-4.5"
+    actual_hours: float = 0
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
         if v not in ALLOWED_MODELS:
             raise ValueError(f"Model '{v}' is not allowed")
+        return v
+
+    @field_validator("actual_hours")
+    @classmethod
+    def hours_must_be_valid(cls, v):
+        if v == 0:
+            return v
+        if v < 0.25 or v > 8.0:
+            raise ValueError("Hours must be between 0.25 and 8.00")
+        if round(v * 4) != v * 4:
+            raise ValueError("Hours must be in 0.25 increments")
         return v
 
 
@@ -260,6 +302,7 @@ GUIDELINES:
 - If similar tickets exist above, check if any had a resolution that applies to this issue. Reference it: "Ticket #XXXX had a similar issue and was resolved by..."
 - NEVER suggest closing or resolving the ticket — only recommend troubleshooting steps and solutions
 - NEVER say you don't have access to ticket data — you have the full summary, notes, and similar ticket history above
+- Techs may paste screenshots or attach images (error dialogs, console output, device photos) — read them carefully and reference the specific details you see in them
 - Give specific, actionable steps — commands, admin console paths, PowerShell cmdlets
 - Keep responses concise and focused — techs are working, not reading essays
 - If the issue needs escalation or on-site work, say so clearly"""
@@ -414,24 +457,60 @@ async def _save_note_background(ticket_id: int, messages: list, model: str, actu
 
 @app.post("/resolve")
 async def resolve(request: ResolveRequest):
-    """Generate resolution note (saved via /save-note) + customer email draft."""
+    """Generate resolution note (saved via /save-note) + customer email draft.
+
+    If chat messages are provided, they are used as the source. Otherwise the
+    ticket's existing notes are pulled from ConnectWise and used instead, so
+    the tech can resolve directly from ticket context without typing a chat.
+    """
     try:
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-        # Fetch ticket + generate customer email in parallel
-        ticket, resolution_note = await asyncio.gather(
-            cw_client.get_ticket(request.ticket_id),
-            openrouter_client.generate_resolution_note(messages, request.model),
+        if messages:
+            ticket = await cw_client.get_ticket(request.ticket_id)
+            source_text = "\n".join(
+                f"{m['role'].upper()}: {openrouter_client.content_to_text(m['content'])}" for m in messages
+            )
+        else:
+            ticket, notes = await asyncio.gather(
+                cw_client.get_ticket(request.ticket_id),
+                cw_client.get_ticket_notes(request.ticket_id),
+            )
+            lines = [
+                f"Ticket Summary: {ticket.get('summary', '')}",
+                f"Company: {ticket.get('company_name', '')} | Contact: {ticket.get('contact_name', '')}",
+                "",
+                "Ticket Notes (most recent first):",
+            ]
+            for n in notes[:30]:
+                flag = "Internal" if n.get("internal") else "External"
+                member = n.get("member") or "Unknown"
+                date = (n.get("date") or "")[:10]
+                text = (n.get("text") or "").strip()
+                if text:
+                    lines.append(f"- [{flag}] {member} ({date}): {text}")
+            source_text = "\n".join(lines)
+
+        resolution_note, customer_email = await asyncio.gather(
+            openrouter_client.generate_resolution_note(source_text, request.model),
+            openrouter_client.generate_customer_email(
+                source_text, request.model,
+                ticket_summary=ticket.get("summary", ""),
+                contact_name=ticket.get("contact_name", "Customer"),
+            ),
         )
 
-        customer_email = await openrouter_client.generate_customer_email(
-            messages, request.model,
-            ticket_summary=ticket.get("summary", ""),
-            contact_name=ticket.get("contact_name", "Customer"),
-        )
-
-        # Save resolution note in background (note+time already handled by /save-note)
         owner_identifier = ticket.get("owner_identifier")
+
+        # When there's no chat, /save-note isn't called, so log the time entry here.
+        if not messages and request.actual_hours > 0:
+            asyncio.create_task(cw_client.create_time_entry(
+                ticket_id=request.ticket_id,
+                actual_hours=request.actual_hours,
+                notes=resolution_note,
+                member_identifier=owner_identifier,
+            ))
+
         asyncio.create_task(_save_resolution_background(
             ticket_id=request.ticket_id,
             text=resolution_note,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from functools import partial
@@ -77,12 +78,27 @@ async def get_messages(ticket_id: int) -> list[dict]:
             cur = await conn.execute(query, (ticket_id,))
             rows = await cur.fetchall()
 
-    return [{"role": r[0], "content": r[1]} for r in rows]
+    return [{"role": r[0], "content": _parse_content(r[1])} for r in rows]
 
 
-async def save_message(ticket_id: int, role: str, content: str) -> int | None:
+def _parse_content(raw: str):
+    """Restore structured (multimodal) content stored as JSON; plain text passes through."""
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(p, dict) and "type" in p for p in parsed):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return raw
+
+
+async def save_message(ticket_id: int, role: str, content) -> int | None:
     if not _conninfo:
         return None
+
+    if not isinstance(content, str):
+        content = json.dumps(content)
 
     query = "INSERT INTO chat_messages (ticket_id, role, content) VALUES (%s, %s, %s) RETURNING id"
 

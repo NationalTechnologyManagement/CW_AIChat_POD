@@ -16,6 +16,26 @@ MODELS = [
 ]
 
 
+def content_to_text(content) -> str:
+    """Flatten structured (multimodal) message content to plain text.
+
+    Image parts become an "[N image(s) attached]" marker so text-only
+    pipelines (summaries, resolution notes, emails) stay coherent.
+    """
+    if isinstance(content, str):
+        return content
+    texts = []
+    image_count = 0
+    for part in content:
+        if part.get("type") == "text":
+            texts.append(part.get("text", ""))
+        elif part.get("type") == "image_url":
+            image_count += 1
+    if image_count:
+        texts.append(f"[{image_count} image(s) attached]")
+    return "\n".join(t for t in texts if t)
+
+
 def _headers() -> dict:
     return {
         "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
@@ -83,7 +103,7 @@ async def stream_chat(
 
 async def summarize_chat(messages: list[dict], model: str) -> str:
     chat_text = "\n".join(
-        f"{m['role'].upper()}: {m['content']}" for m in messages
+        f"{m['role'].upper()}: {content_to_text(m['content'])}" for m in messages
     )
 
     system_prompt = (
@@ -171,17 +191,19 @@ async def extract_search_keywords(ticket_summary: str) -> list[str]:
     return [k for k in keywords if 2 < len(k) < 30]
 
 
-async def generate_resolution_note(messages: list[dict], model: str) -> str:
-    chat_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
-
+async def generate_resolution_note(source_text: str, model: str) -> str:
     system_prompt = (
         "You are a technical note writer for an MSP ticketing system. "
-        "Write a resolution note for this support ticket based on the chat.\n\n"
-        "RULES:\n"
+        "Write a resolution note for this support ticket based on the source material below. "
+        "The source may be a technician chat transcript OR raw internal ticket notes — "
+        "treat internal commentary as reference only; do not copy it verbatim.\n\n"
+        "RULES (the resolution note may be visible to the customer — treat it as customer-facing):\n"
         "- Write a concise paragraph summary of what the issue was, what was done, and the outcome\n"
         "- NEVER mention pricing, costs, billing, or fees\n"
-        "- NEVER admit fault, wrongdoing, or blame anyone\n"
-        "- NEVER mention vendor names or internal tools\n"
+        "- NEVER admit fault, wrongdoing, or blame anyone (customer, technician, vendor, or third party)\n"
+        "- NEVER mention vendor names, internal tools, internal ticket IDs, or internal team discussions\n"
+        "- NEVER include diagnostic asides, speculation, frustration, or raw log/error dumps\n"
+        "- Omit anything inappropriate for the customer to read\n"
         "- Keep it professional and solution-focused\n"
         "- Write in past tense\n"
         "- End the note with a new line: STATUS: Resolved\n\n"
@@ -191,25 +213,26 @@ async def generate_resolution_note(messages: list[dict], model: str) -> str:
 
     return await _call_openrouter(
         system_prompt,
-        f"Write a resolution note based on this support chat:\n\n{chat_text}",
+        f"Write a resolution note based on this support context:\n\n{source_text}",
         model,
     )
 
 
 async def generate_customer_email(
-    messages: list[dict], model: str, ticket_summary: str, contact_name: str
+    source_text: str, model: str, ticket_summary: str, contact_name: str
 ) -> str:
-    chat_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
-
     system_prompt = (
         "You are writing a professional customer-facing email for an MSP (managed IT services provider). "
-        "Based on the internal support chat, write a clean email to the customer summarizing what was done.\n\n"
+        "Based on the source material below (a technician chat OR raw internal ticket notes), "
+        "write a clean email to the customer summarizing what was done.\n\n"
         "STRICT RULES — VIOLATING THESE IS UNACCEPTABLE:\n"
         "- NEVER mention pricing, costs, billing, fees, or charges\n"
         "- NEVER admit fault, wrongdoing, or blame anyone\n"
         "- NEVER mention internal team discussions, vendor names, or vendor-specific issues\n"
+        "- NEVER copy raw internal notes, diagnostic asides, speculation, or log/error dumps\n"
         "- NEVER use overly technical jargon the customer wouldn't understand\n"
-        "- NEVER mention ticket numbers, internal systems, or tools used\n\n"
+        "- NEVER mention ticket numbers, internal systems, or tools used\n"
+        "- Treat all input as internal source material — extract only what is safe and appropriate for the customer to read\n\n"
         "FORMAT:\n"
         "- Start with a greeting using the contact's first name\n"
         "- Write a short professional paragraph or bulleted summary of what was done and the outcome\n"
@@ -221,7 +244,7 @@ async def generate_customer_email(
 
     return await _call_openrouter(
         system_prompt,
-        f"Contact name: {contact_name}\nTicket summary: {ticket_summary}\n\nInternal chat to summarize for the customer:\n\n{chat_text}",
+        f"Contact name: {contact_name}\nTicket summary: {ticket_summary}\n\nInternal source material to summarize for the customer:\n\n{source_text}",
         model,
         temperature=0.4,
     )
