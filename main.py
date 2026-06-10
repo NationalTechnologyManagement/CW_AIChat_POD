@@ -29,14 +29,11 @@ if not POD_SECRET:
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 
-ALLOWED_MODELS = {m["id"] for m in openrouter_client.MODELS}
-
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cw_client.init_client()
     await db.init_pool()
+    await openrouter_client.refresh_models()
     yield
     await db.close_pool()
     await cw_client.close_client()
@@ -118,7 +115,7 @@ class ChatRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if v not in ALLOWED_MODELS:
+        if not openrouter_client.is_model_allowed(v):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -132,7 +129,7 @@ class SaveNoteRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if v not in ALLOWED_MODELS:
+        if not openrouter_client.is_model_allowed(v):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -157,7 +154,7 @@ class ResolveRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if v not in ALLOWED_MODELS:
+        if not openrouter_client.is_model_allowed(v):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -318,6 +315,7 @@ async def health():
 
 @app.get("/pod", response_class=HTMLResponse)
 async def pod(request: Request, ticketId: int = Query(...)):
+    models = await openrouter_client.get_models()
     try:
         ticket, notes, saved_messages = await asyncio.gather(
             cw_client.get_ticket(ticketId),
@@ -340,7 +338,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "notes": notes,
                 "duplicates": duplicates,
                 "saved_messages": saved_messages,
-                "models": openrouter_client.MODELS,
+                "models": models,
                 "cw_manage_url": CW_MANAGE_URL,
                 "error": None,
             },
@@ -353,7 +351,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "ticket": None,
                 "notes": [],
                 "duplicates": [],
-                "models": openrouter_client.MODELS,
+                "models": models,
                 "cw_manage_url": CW_MANAGE_URL,
                 "error": "ConnectWise connection error — check API keys",
             },
@@ -366,7 +364,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "ticket": None,
                 "notes": [],
                 "duplicates": [],
-                "models": openrouter_client.MODELS,
+                "models": models,
                 "cw_manage_url": CW_MANAGE_URL,
                 "error": f"Ticket #{ticketId} not found",
             },
@@ -379,7 +377,7 @@ async def pod(request: Request, ticketId: int = Query(...)):
                 "ticket": None,
                 "notes": [],
                 "duplicates": [],
-                "models": openrouter_client.MODELS,
+                "models": models,
                 "cw_manage_url": CW_MANAGE_URL,
                 "error": f"Error loading ticket: {str(e)[:100]}",
             },

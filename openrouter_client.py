@@ -1,19 +1,85 @@
 import os
 import json
+import re
+import time
 from typing import AsyncGenerator
 
 import httpx
 
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
-MODELS = [
+# Used when the OpenRouter catalog can't be fetched; also always allowed so
+# saved defaults keep working even if a model drops out of a refreshed list.
+FALLBACK_MODELS = [
     {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5"},
-    {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4"},
-    {"id": "openai/gpt-4o", "label": "GPT-4o"},
-    {"id": "openai/gpt-4o-mini", "label": "GPT-4o Mini"},
-    {"id": "google/gemini-2.5-flash-preview", "label": "Gemini 2.5 Flash"},
+    {"id": "anthropic/claude-sonnet-4.6", "label": "Claude Sonnet 4.6"},
+    {"id": "anthropic/claude-opus-4.8", "label": "Claude Opus 4.8"},
+    {"id": "openai/gpt-5.5", "label": "GPT-5.5"},
+    {"id": "openai/gpt-5.4-mini", "label": "GPT-5.4 Mini"},
+    {"id": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
 ]
+
+# One dropdown entry per slot, filled with the newest vision-capable model
+# whose id matches. Patterns deliberately exclude -fast/-pro/-chat/preview/:free
+# variants so the list stays curated while versions update themselves.
+MODEL_SLOTS = [
+    re.compile(r"^anthropic/claude-haiku-[\d.]+$"),
+    re.compile(r"^anthropic/claude-sonnet-[\d.]+$"),
+    re.compile(r"^anthropic/claude-opus-[\d.]+$"),
+    re.compile(r"^openai/gpt-[\d.]+$"),
+    re.compile(r"^openai/gpt-[\d.]+-mini$"),
+    re.compile(r"^google/gemini-[\d.]+-flash$"),
+]
+
+MODELS_TTL_SECONDS = 6 * 3600
+
+_models_cache: dict = {"models": [], "ids": set(), "fetched_at": 0.0}
+
+
+async def refresh_models() -> None:
+    """Refresh the model list from OpenRouter's catalog. Never raises."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(OPENROUTER_MODELS_URL)
+            response.raise_for_status()
+            catalog = response.json().get("data", [])
+    except Exception as e:
+        print(f"[models] Refresh failed, using previous/fallback list: {e}")
+        return
+
+    vision_models = [
+        m for m in catalog
+        if "image" in (m.get("architecture") or {}).get("input_modalities", [])
+    ]
+
+    models = []
+    for pattern in MODEL_SLOTS:
+        candidates = [m for m in vision_models if pattern.match(m["id"])]
+        if not candidates:
+            continue
+        newest = max(candidates, key=lambda m: m.get("created", 0))
+        # OpenRouter names look like "Anthropic: Claude Opus 4.8" — drop the vendor prefix
+        label = (newest.get("name") or newest["id"]).split(": ", 1)[-1]
+        models.append({"id": newest["id"], "label": label})
+
+    if models:
+        _models_cache["models"] = models
+        _models_cache["ids"] = {m["id"] for m in models}
+        _models_cache["fetched_at"] = time.time()
+        print(f"[models] Refreshed: {[m['id'] for m in models]}")
+
+
+async def get_models() -> list[dict]:
+    """Current model list for the UI; refreshes when stale, falls back if empty."""
+    if time.time() - _models_cache["fetched_at"] > MODELS_TTL_SECONDS:
+        await refresh_models()
+    return _models_cache["models"] or FALLBACK_MODELS
+
+
+def is_model_allowed(model_id: str) -> bool:
+    return model_id in _models_cache["ids"] or any(m["id"] == model_id for m in FALLBACK_MODELS)
 
 
 def content_to_text(content) -> str:
