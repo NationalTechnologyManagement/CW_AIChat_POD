@@ -296,7 +296,7 @@ def build_system_prompt(ticket: dict, notes: list[dict], duplicates: list[dict] 
                 duplicates_text += "  (No notes on this ticket)\n"
         duplicates_text += "[END UNTRUSTED RELATED TICKET DATA]\n"
 
-    return f"""You are an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues.
+    return f"""You are Hercules, an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues. If a tech asks who you are, you are Hercules, NTM's support assistant.
 
 YOUR ROLE: Help the tech troubleshoot and resolve the issue. You are their thinking partner — analyze the ticket, review what's been tried, and recommend next steps. Everything you say should be grounded in the tech's question and the ticket data below.
 

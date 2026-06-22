@@ -3,26 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NTM AI Assistant</title>
+    <title>Hercules — NTM</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        /* ConnectWise PSA-inspired palette: navy chrome, CW blue accents,
-           light gray workspace. Tweak here to match your instance's theme. */
+        /* NTM brand palette: orange accent (#E8721C) on a clean light workspace. */
         :root {
             --bg-primary: #ffffff;
             --bg-secondary: #f4f6f8;
             --bg-input: #ffffff;
-            --bg-message-user: #ddeaf6;
+            --bg-message-user: #E8721C;
             --bg-message-ai: #f4f6f8;
-            --bg-header: #1d3a5f;
+            --bg-header: #E8721C;
             --header-text: #ffffff;
             --bg-context: #f4f6f8;
             --text-primary: #212529;
             --text-secondary: #4a5560;
             --text-muted: #7a8691;
-            --accent: #0c7bbf;
-            --accent-hover: #0a679f;
+            --accent: #E8721C;
+            --accent-hover: #cf6014;
             --success: #2e7d32;
             --error: #c62828;
             --warning: #b26a00;
@@ -61,11 +60,38 @@
             flex-shrink: 0;
         }
 
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-width: 0;
+        }
+
+        .header-logo {
+            height: 30px;
+            width: 30px;
+            padding: 3px;
+            background: #fff;
+            border-radius: 7px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
         .header-title {
-            font-weight: 600;
-            font-size: 14px;
+            font-weight: 700;
+            font-size: 15px;
             color: var(--header-text);
-            letter-spacing: -0.01em;
+            letter-spacing: 0.01em;
+        }
+
+        .header-subtitle {
+            font-size: 10px;
+            font-weight: 500;
+            color: rgba(255,255,255,0.8);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-top: -2px;
         }
 
         .header-controls {
@@ -157,24 +183,28 @@
         .chat-area::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
 
         .message {
-            padding: 8px 12px;
-            border-radius: var(--radius);
-            max-width: 88%;
+            padding: 9px 14px;
+            border-radius: 16px;
+            max-width: 82%;
+            min-width: 0;
             line-height: 1.5;
-            word-wrap: break-word;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            box-shadow: var(--shadow-sm);
         }
 
         .message-user {
             background: var(--bg-message-user);
+            color: #fff;
             align-self: flex-end;
-            border-bottom-right-radius: 2px;
+            border-bottom-right-radius: 5px;
         }
 
         .message-assistant {
             background: var(--bg-message-ai);
             align-self: flex-start;
             border: 1px solid var(--border-light);
-            border-bottom-left-radius: 2px;
+            border-bottom-left-radius: 5px;
         }
 
         .message-label {
@@ -186,7 +216,21 @@
             letter-spacing: 0.04em;
         }
 
-        .message-content { font-size: 13px; line-height: 1.5; }
+        .message-user .message-label { color: rgba(255,255,255,0.85); }
+
+        .message-content {
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .message-user .message-content a { color: #fff; text-decoration: underline; }
+        .message-user .message-content code {
+            background: rgba(255,255,255,0.22);
+            border-color: rgba(255,255,255,0.3);
+            color: #fff;
+        }
 
         .message-content p { margin-bottom: 2px; }
         .message-content p:last-child { margin-bottom: 0; }
@@ -204,6 +248,7 @@
             background: #f8f9fa;
             padding: 10px;
             border-radius: 6px;
+            max-width: 100%;
             overflow-x: auto;
             margin: 6px 0;
             border: 1px solid var(--border);
@@ -736,7 +781,10 @@
 <body>
     {% if error %}
     <div class="header">
-        <span class="header-title">NTM AI Assistant</span>
+        <div class="header-brand">
+            <img class="header-logo" src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM">
+            <span class="header-title">Hercules</span>
+        </div>
     </div>
     <div class="error-banner">{{ error }}</div>
     <div class="chat-area">
@@ -744,7 +792,13 @@
     </div>
     {% else %}
     <div class="header">
-        <span class="header-title">NTM AI Assistant</span>
+        <div class="header-brand">
+            <img class="header-logo" src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM">
+            <div style="display:flex; flex-direction:column; min-width:0;">
+                <span class="header-title">Hercules</span>
+                <span class="header-subtitle">NTM AI Assistant</span>
+            </div>
+        </div>
         <div class="header-controls">
             <select class="model-select" id="modelSelect">
                 {% for m in models %}
@@ -777,7 +831,7 @@
 
     <div class="chat-area" id="chatArea">
         <div class="welcome-message">
-            Ask me anything about this ticket. I have the full context loaded.
+            Hi, I'm Hercules — ask me anything about this ticket. I have the full context loaded.
         </div>
     </div>
 
@@ -1829,7 +1883,7 @@
             saveBtn.disabled = true;
             resolveBtn.disabled = true;
             saveBtn.textContent = 'Save to Ticket';
-            chatArea.innerHTML = '<div class="welcome-message">Ask me anything about this ticket. I have the full context loaded.</div>';
+            chatArea.innerHTML = '<div class="welcome-message">Hi, I\'m Hercules — ask me anything about this ticket. I have the full context loaded.</div>';
         }
 
         // --- Event Listeners ---

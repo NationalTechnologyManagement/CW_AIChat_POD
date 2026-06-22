@@ -107,7 +107,7 @@ def _headers() -> dict:
         "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://trustntm.com",
-        "X-Title": "NTM AI Assistant",
+        "X-Title": "Hercules (NTM AI Assistant)",
     }
 
 
