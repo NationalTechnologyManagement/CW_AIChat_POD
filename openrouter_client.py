@@ -138,8 +138,17 @@ async def stream_chat(
                     yield json.dumps({"error": "Rate limited — try again in a moment"})
                     return
                 if response.status_code >= 400:
-                    await response.aread()
-                    yield json.dumps({"error": f"AI service error ({response.status_code})"})
+                    body = await response.aread()
+                    print(f"[chat] OpenRouter error {response.status_code}: {body[:500]!r}")
+                    detail = ""
+                    try:
+                        detail = json.loads(body)["error"]["message"]
+                    except Exception:
+                        pass
+                    message = f"AI service error ({response.status_code})"
+                    if detail:
+                        message += f": {detail}"
+                    yield json.dumps({"error": message})
                     return
 
                 async for line in response.aiter_lines():

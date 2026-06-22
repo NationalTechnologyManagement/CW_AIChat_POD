@@ -1,6 +1,6 @@
 import os
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 
@@ -217,13 +217,21 @@ async def send_email_to_contact(
 
 async def create_time_entry(
     ticket_id: int,
-    actual_hours: float,
+    time_start: str,
+    time_end: str,
     notes: str = "",
     member_identifier: str | None = None,
 ) -> dict:
-    now = datetime.now(timezone.utc)
-    time_start = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    time_end = (now + timedelta(hours=actual_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Create a time entry from explicit start/end timestamps.
+
+    time_start / time_end are ISO-8601 UTC strings (e.g. 2025-01-15T09:00:00Z).
+    actualHours is derived from the span so the entry reflects the real worked
+    time. The entry is attributed to member_identifier — pass the tech who
+    actually did the work so it is never logged against the API/automation user.
+    """
+    start_dt = _parse_iso(time_start)
+    end_dt = _parse_iso(time_end)
+    actual_hours = round((end_dt - start_dt).total_seconds() / 3600, 2)
 
     payload = {
         "chargeToType": "ServiceTicket",
@@ -240,6 +248,39 @@ async def create_time_entry(
     response = await _client.post("/time/entries", json=payload)
     _handle_response(response)
     return response.json()
+
+
+def _parse_iso(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp (accepting a trailing 'Z') to a datetime."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+async def get_members() -> list[dict]:
+    """Active full-license members (real technicians) for the time-entry picker.
+
+    Filters out API/integration accounts (licenseClass != 'F') so the tech
+    selecting themselves only sees real people.
+    """
+    response = await _client.get(
+        "/system/members",
+        params={
+            "conditions": "inactiveFlag = false and licenseClass = 'F'",
+            "fields": "id,identifier,firstName,lastName",
+            "pageSize": 1000,
+            "orderBy": "firstName asc",
+        },
+    )
+    _handle_response(response)
+    members = response.json()
+
+    result = []
+    for m in members:
+        identifier = m.get("identifier")
+        if not identifier:
+            continue
+        name = " ".join(p for p in [m.get("firstName"), m.get("lastName")] if p).strip()
+        result.append({"identifier": identifier, "name": name or identifier})
+    return result
 
 
 def _nested_name(data: dict, key: str) -> str:

@@ -3,6 +3,7 @@ import hmac
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -124,24 +125,13 @@ class SaveNoteRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
     model: str = "anthropic/claude-haiku-4.5"
-    actual_hours: float = 0
+    member_identifier: str | None = None
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
         if not openrouter_client.is_model_allowed(v):
             raise ValueError(f"Model '{v}' is not allowed")
-        return v
-
-    @field_validator("actual_hours")
-    @classmethod
-    def hours_must_be_valid(cls, v):
-        if v == 0:
-            return v
-        if v < 0.25 or v > 8.0:
-            raise ValueError("Hours must be between 0.25 and 8.00")
-        if round(v * 4) != v * 4:
-            raise ValueError("Hours must be in 0.25 increments")
         return v
 
 
@@ -149,7 +139,7 @@ class ResolveRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage] = []
     model: str = "anthropic/claude-haiku-4.5"
-    actual_hours: float = 0
+    member_identifier: str | None = None
 
     @field_validator("model")
     @classmethod
@@ -158,15 +148,42 @@ class ResolveRequest(BaseModel):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
-    @field_validator("actual_hours")
+
+class AddTimeRequest(BaseModel):
+    ticket_id: int
+    time_start: str
+    time_end: str
+    notes: str = ""
+    member_identifier: str
+
+    @field_validator("member_identifier")
     @classmethod
-    def hours_must_be_valid(cls, v):
-        if v == 0:
-            return v
-        if v < 0.25 or v > 8.0:
-            raise ValueError("Hours must be between 0.25 and 8.00")
-        if round(v * 4) != v * 4:
-            raise ValueError("Hours must be in 0.25 increments")
+    def member_required(cls, v):
+        if not v or not v.strip():
+            raise ValueError("A technician must be selected to log time")
+        return v.strip()
+
+    @field_validator("time_start", "time_end")
+    @classmethod
+    def time_must_parse(cls, v):
+        try:
+            datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise ValueError("Times must be ISO-8601 timestamps")
+        return v
+
+    @field_validator("time_end")
+    @classmethod
+    def end_after_start(cls, v, info):
+        start = info.data.get("time_start")
+        if start:
+            s = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            e = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            span_hours = (e - s).total_seconds() / 3600
+            if span_hours <= 0:
+                raise ValueError("End time must be after start time")
+            if span_hours > 24:
+                raise ValueError("Time entry cannot exceed 24 hours")
         return v
 
 
@@ -314,13 +331,35 @@ async def health():
 
 
 @app.get("/pod", response_class=HTMLResponse)
-async def pod(request: Request, ticketId: int = Query(...)):
+async def pod(
+    request: Request,
+    ticketId: int = Query(...),
+    member: str = Query("", description="Logged-in tech's CW member identifier, if CW can pass it"),
+):
     models = await openrouter_client.get_models()
+
+    def render(ctx: dict):
+        base = {
+            "request": request,
+            "ticket": None,
+            "notes": [],
+            "duplicates": [],
+            "saved_messages": [],
+            "models": models,
+            "members": [],
+            "current_member": member.strip(),
+            "cw_manage_url": CW_MANAGE_URL,
+            "error": None,
+        }
+        base.update(ctx)
+        return templates.TemplateResponse("pod.html", base)
+
     try:
-        ticket, notes, saved_messages = await asyncio.gather(
+        ticket, notes, saved_messages, members = await asyncio.gather(
             cw_client.get_ticket(ticketId),
             cw_client.get_ticket_notes(ticketId),
             db.get_messages(ticketId),
+            _safe_get_members(),
         )
 
         # Similar ticket search — non-critical
@@ -330,58 +369,28 @@ async def pod(request: Request, ticketId: int = Query(...)):
         except Exception:
             pass
 
-        return templates.TemplateResponse(
-            "pod.html",
-            {
-                "request": request,
-                "ticket": ticket,
-                "notes": notes,
-                "duplicates": duplicates,
-                "saved_messages": saved_messages,
-                "models": models,
-                "cw_manage_url": CW_MANAGE_URL,
-                "error": None,
-            },
-        )
+        return render({
+            "ticket": ticket,
+            "notes": notes,
+            "duplicates": duplicates,
+            "saved_messages": saved_messages,
+            "members": members,
+        })
     except CWAuthError:
-        return templates.TemplateResponse(
-            "pod.html",
-            {
-                "request": request,
-                "ticket": None,
-                "notes": [],
-                "duplicates": [],
-                "models": models,
-                "cw_manage_url": CW_MANAGE_URL,
-                "error": "ConnectWise connection error — check API keys",
-            },
-        )
+        return render({"error": "ConnectWise connection error — check API keys"})
     except CWNotFoundError:
-        return templates.TemplateResponse(
-            "pod.html",
-            {
-                "request": request,
-                "ticket": None,
-                "notes": [],
-                "duplicates": [],
-                "models": models,
-                "cw_manage_url": CW_MANAGE_URL,
-                "error": f"Ticket #{ticketId} not found",
-            },
-        )
+        return render({"error": f"Ticket #{ticketId} not found"})
     except Exception as e:
-        return templates.TemplateResponse(
-            "pod.html",
-            {
-                "request": request,
-                "ticket": None,
-                "notes": [],
-                "duplicates": [],
-                "models": models,
-                "cw_manage_url": CW_MANAGE_URL,
-                "error": f"Error loading ticket: {str(e)[:100]}",
-            },
-        )
+        return render({"error": f"Error loading ticket: {str(e)[:100]}"})
+
+
+async def _safe_get_members() -> list[dict]:
+    """Member list for the time picker — never fatal to the pod load."""
+    try:
+        return await cw_client.get_members()
+    except Exception as e:
+        print(f"[pod] Could not load members: {e}")
+        return []
 
 
 @app.post("/chat")
@@ -418,39 +427,54 @@ async def save_note(request: SaveNoteRequest):
         ticket_id=request.ticket_id,
         messages=messages,
         model=request.model,
-        actual_hours=request.actual_hours,
+        member_identifier=request.member_identifier,
     ))
 
     return {"success": True, "message": "Note is being saved..."}
 
 
-async def _save_note_background(ticket_id: int, messages: list, model: str, actual_hours: float = 0):
+async def _save_note_background(ticket_id: int, messages: list, model: str, member_identifier: str | None = None):
     try:
         ticket, summary = await asyncio.gather(
             cw_client.get_ticket(ticket_id),
             openrouter_client.summarize_chat(messages, model),
         )
-        owner_identifier = ticket.get("owner_identifier")
+        # Attribute the note to the tech who ran the chat; fall back to ticket owner.
+        author = member_identifier or ticket.get("owner_identifier")
 
-        if actual_hours > 0:
-            # Time selected — create time entry with summary as notes (no separate ticket note)
-            await cw_client.create_time_entry(
-                ticket_id=ticket_id,
-                actual_hours=actual_hours,
-                notes=summary,
-                member_identifier=owner_identifier,
-            )
-            print(f"[save] Time entry {actual_hours}hr with notes saved for ticket {ticket_id}")
-        else:
-            # No time — create ticket note only
-            await cw_client.create_ticket_note(
-                ticket_id=ticket_id,
-                text=summary,
-                member_identifier=owner_identifier,
-            )
-            print(f"[save] Note saved for ticket {ticket_id}")
+        await cw_client.create_ticket_note(
+            ticket_id=ticket_id,
+            text=summary,
+            member_identifier=author,
+        )
+        print(f"[save] Note saved for ticket {ticket_id} as {author}")
     except Exception as e:
         print(f"[save] Failed for ticket {ticket_id}: {e}")
+
+
+@app.post("/add-time")
+async def add_time(request: AddTimeRequest):
+    """Log a time entry against the ticket, attributed to the selected tech.
+
+    The tech sets the actual start and end time they worked; ConnectWise records
+    the entry under their member identifier — never the API/automation user.
+    """
+    try:
+        result = await cw_client.create_time_entry(
+            ticket_id=request.ticket_id,
+            time_start=request.time_start,
+            time_end=request.time_end,
+            notes=request.notes,
+            member_identifier=request.member_identifier,
+        )
+        hours = result.get("actualHours")
+        print(f"[add-time] Entry {result.get('id')} ({hours}hr) for ticket {request.ticket_id} as {request.member_identifier}")
+        return {"success": True, "actual_hours": hours, "message": "Time entry saved"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"Failed to log time: {str(e)[:120]}"},
+        )
 
 
 @app.post("/resolve")
@@ -498,21 +522,13 @@ async def resolve(request: ResolveRequest):
             ),
         )
 
-        owner_identifier = ticket.get("owner_identifier")
-
-        # When there's no chat, /save-note isn't called, so log the time entry here.
-        if not messages and request.actual_hours > 0:
-            asyncio.create_task(cw_client.create_time_entry(
-                ticket_id=request.ticket_id,
-                actual_hours=request.actual_hours,
-                notes=resolution_note,
-                member_identifier=owner_identifier,
-            ))
+        # Attribute the resolution note to the tech resolving it; fall back to owner.
+        author = request.member_identifier or ticket.get("owner_identifier")
 
         asyncio.create_task(_save_resolution_background(
             ticket_id=request.ticket_id,
             text=resolution_note,
-            member_identifier=owner_identifier,
+            member_identifier=author,
         ))
 
         return {
@@ -544,6 +560,7 @@ async def _save_resolution_background(ticket_id: int, text: str, member_identifi
 class SendEmailRequest(BaseModel):
     ticket_id: int
     email_text: str
+    member_identifier: str | None = None
 
 
 @app.post("/send-email")
@@ -551,12 +568,12 @@ async def send_email(request: SendEmailRequest):
     """Send email to ticket contact via 0-hour time entry with Discussion + emailContactFlag."""
     try:
         ticket = await cw_client.get_ticket(request.ticket_id)
-        owner_identifier = ticket.get("owner_identifier")
+        author = request.member_identifier or ticket.get("owner_identifier")
 
         result = await cw_client.send_email_to_contact(
             ticket_id=request.ticket_id,
             text=request.email_text,
-            member_identifier=owner_identifier,
+            member_identifier=author,
         )
         print(f"[send-email] Time entry created for ticket {request.ticket_id}, id={result.get('id')}, emailContactFlag=True")
         return {"success": True, "message": f"Email sent to {ticket.get('contact_name', 'contact')}"}

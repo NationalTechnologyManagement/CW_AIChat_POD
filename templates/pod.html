@@ -490,6 +490,17 @@
 
         .action-group { display: flex; gap: 6px; }
 
+        .btn-time {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-time:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+
         .btn-resolve {
             border-color: var(--warning);
             color: var(--warning);
@@ -502,41 +513,51 @@
         }
 
         /* Time Entry Modal */
-        .time-stepper {
+        .time-modal { max-width: 360px; width: 92%; }
+
+        .time-field {
             display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 16px;
-            margin: 14px 0;
+            flex-direction: column;
+            gap: 3px;
+            margin: 8px 0;
         }
 
-        .time-stepper button {
-            width: 34px;
-            height: 34px;
-            border-radius: 50%;
-            border: 1px solid var(--border);
+        .time-field > span {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .time-input {
+            width: 100%;
             background: var(--bg-input);
             color: var(--text-primary);
-            font-size: 16px;
-            font-weight: 500;
-            cursor: pointer;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 7px 10px;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .time-input:focus { border-color: var(--accent); }
+
+        .time-row {
             display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.15s;
+            gap: 10px;
         }
 
-        .time-stepper button:hover {
-            background: var(--accent);
-            color: #fff;
-            border-color: var(--accent);
-        }
+        .time-row .time-field { flex: 1; margin-top: 0; }
 
-        .time-display {
-            font-size: 22px;
+        .time-duration {
+            font-size: 13px;
             font-weight: 600;
-            min-width: 80px;
+            color: var(--text-secondary);
             text-align: center;
+            margin: 10px 0 4px;
         }
 
         .modal-textarea {
@@ -576,11 +597,6 @@
             resize: vertical;
             margin: 6px 0;
             line-height: 1.5;
-        }
-
-        .btn-no-time {
-            background: var(--bg-input);
-            color: var(--text-secondary);
         }
 
         /* Toast */
@@ -727,6 +743,7 @@
 
     <div class="action-bar">
         <div class="action-group">
+            <button class="btn-action btn-time" id="addTimeBtn" title="Log time worked on this ticket">&#128338; Add Time</button>
             <button class="btn-action btn-save" id="saveBtn" disabled>Save to Ticket</button>
             <button class="btn-action btn-resolve" id="resolveBtn">Resolve</button>
         </div>
@@ -746,16 +763,31 @@
 
     <!-- Time Entry Modal -->
     <div class="dialog-overlay" id="timeModalOverlay">
-        <div class="dialog">
-            <p style="font-weight:600; margin-bottom:4px;">Log Time &mdash; Ticket #{{ ticket.id }}</p>
-            <div class="time-stepper">
-                <button id="timeMinus">&minus;</button>
-                <span class="time-display" id="timeDisplay">0.25 hr</span>
-                <button id="timePlus">+</button>
+        <div class="dialog time-modal">
+            <p style="font-weight:600; margin-bottom:4px;">Add Time &mdash; Ticket #{{ ticket.id }}</p>
+            <label class="time-field">
+                <span>Technician</span>
+                <select class="time-input" id="timeMember"></select>
+            </label>
+            <label class="time-field">
+                <span>Date</span>
+                <input type="date" class="time-input" id="timeDate">
+            </label>
+            <div class="time-row">
+                <label class="time-field">
+                    <span>Start</span>
+                    <input type="time" class="time-input" id="timeStartInput">
+                </label>
+                <label class="time-field">
+                    <span>End</span>
+                    <input type="time" class="time-input" id="timeEndInput">
+                </label>
             </div>
+            <div class="time-duration" id="timeDuration">Duration: &mdash;</div>
+            <textarea class="modal-textarea" id="timeNote" placeholder="What did you work on? (optional)"></textarea>
             <div class="dialog-buttons">
-                <button class="btn btn-no-time" id="timeSkip">No Time</button>
-                <button class="btn btn-confirm" id="timeSubmit">Save with Time</button>
+                <button class="btn btn-cancel" id="timeCancel">Cancel</button>
+                <button class="btn btn-confirm" id="timeSubmit">Save Time Entry</button>
             </div>
         </div>
     </div>
@@ -786,6 +818,8 @@
         const MODELS = {{ models | tojson }};
         const DUPLICATES = {{ duplicates | tojson }};
         const SAVED_MESSAGES = {{ saved_messages | tojson }};
+        const MEMBERS = {{ members | tojson }};
+        const CURRENT_MEMBER = {{ current_member | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
 
         // Extract token from URL so we can pass it on API calls
@@ -795,8 +829,23 @@
         let messages = [];
         let isStreaming = false;
         let hasNewMessages = false;
-        let currentTimeHours = 0.25;
         let pendingAttachments = [];  // {kind:'image', dataUrl, name} | {kind:'text', text, name}
+
+        // The tech operating the pod. Defaults to the CW-supplied member (if the
+        // pod URL passes one) or the tech's last choice, persisted locally. Used
+        // so time entries, notes, and emails post as the real tech — not the API user.
+        const MEMBER_STORAGE_KEY = 'cw_pod_member';
+        function getStoredMember() {
+            try { return localStorage.getItem(MEMBER_STORAGE_KEY) || ''; } catch (e) { return ''; }
+        }
+        function setStoredMember(id) {
+            try { localStorage.setItem(MEMBER_STORAGE_KEY, id); } catch (e) {}
+        }
+        let selectedMember = CURRENT_MEMBER || getStoredMember() || '';
+        function memberName(id) {
+            const m = MEMBERS.find(function(x) { return x.identifier === id; });
+            return m ? m.name : id;
+        }
 
         const MAX_IMAGES_PER_MESSAGE = 4;
         const MAX_TEXT_FILE_BYTES = 51200;  // 50KB
@@ -819,7 +868,15 @@
         const dialogConfirm = document.getElementById('dialogConfirm');
         const toast = document.getElementById('toast');
         const timeModalOverlay = document.getElementById('timeModalOverlay');
-        const timeDisplay = document.getElementById('timeDisplay');
+        const addTimeBtn = document.getElementById('addTimeBtn');
+        const timeMember = document.getElementById('timeMember');
+        const timeDate = document.getElementById('timeDate');
+        const timeStartInput = document.getElementById('timeStartInput');
+        const timeEndInput = document.getElementById('timeEndInput');
+        const timeNote = document.getElementById('timeNote');
+        const timeDuration = document.getElementById('timeDuration');
+        const timeCancel = document.getElementById('timeCancel');
+        const timeSubmitBtn = document.getElementById('timeSubmit');
         const resolveModalOverlay = document.getElementById('resolveModalOverlay');
         const resolveStatus = document.getElementById('resolveStatus');
         const emailSection = document.getElementById('emailSection');
@@ -1290,63 +1347,132 @@
         }
 
         // --- Time Modal ---
-        let pendingAction = null;
+        // Populate the technician picker (active full-license members) and
+        // preselect whoever the pod is acting as.
+        function populateMemberPicker() {
+            timeMember.innerHTML = '';
+            if (!MEMBERS || MEMBERS.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No technicians available';
+                timeMember.appendChild(opt);
+                return;
+            }
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Select technician...';
+            timeMember.appendChild(placeholder);
+            MEMBERS.forEach(function(m) {
+                const opt = document.createElement('option');
+                opt.value = m.identifier;
+                opt.textContent = m.name;
+                timeMember.appendChild(opt);
+            });
+            if (selectedMember && MEMBERS.some(function(m) { return m.identifier === selectedMember; })) {
+                timeMember.value = selectedMember;
+            }
+        }
+        populateMemberPicker();
 
-        function openTimeModal(action) {
-            pendingAction = action;
-            currentTimeHours = 0.25;
-            updateTimeDisplay();
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        // Build a local-time Date from the date + time fields. toISOString() then
+        // converts to UTC, so the tech enters their wall-clock times and CW gets
+        // correct UTC timestamps regardless of timezone.
+        function buildLocalDate(dateStr, timeStr) {
+            const dp = dateStr.split('-').map(Number);
+            const tp = timeStr.split(':').map(Number);
+            return new Date(dp[0], dp[1] - 1, dp[2], tp[0], tp[1], 0, 0);
+        }
+
+        function currentSpanHours() {
+            if (!timeDate.value || !timeStartInput.value || !timeEndInput.value) return null;
+            const start = buildLocalDate(timeDate.value, timeStartInput.value);
+            const end = buildLocalDate(timeDate.value, timeEndInput.value);
+            return (end - start) / 3600000;
+        }
+
+        function updateDuration() {
+            const span = currentSpanHours();
+            if (span === null) { timeDuration.textContent = 'Duration: —'; return; }
+            if (span <= 0) { timeDuration.textContent = 'End must be after start'; return; }
+            timeDuration.textContent = 'Duration: ' + span.toFixed(2) + ' hr';
+        }
+
+        function openTimeModal() {
+            const now = new Date();
+            const start = new Date(now.getTime() - 30 * 60000);  // default to a 30-min block ending now
+            timeDate.value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
+            timeStartInput.value = pad2(start.getHours()) + ':' + pad2(start.getMinutes());
+            timeEndInput.value = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+            timeNote.value = '';
+            populateMemberPicker();
+            updateDuration();
             timeModalOverlay.classList.add('show');
         }
 
-        function updateTimeDisplay() {
-            timeDisplay.textContent = currentTimeHours.toFixed(2) + ' hr';
-        }
-
-        document.getElementById('timePlus').addEventListener('click', function() {
-            if (currentTimeHours < 8.0) {
-                currentTimeHours = Math.round((currentTimeHours + 0.25) * 100) / 100;
-                updateTimeDisplay();
-            }
+        timeMember.addEventListener('change', function() {
+            if (timeMember.value) { selectedMember = timeMember.value; setStoredMember(selectedMember); }
         });
+        timeDate.addEventListener('change', updateDuration);
+        timeStartInput.addEventListener('change', updateDuration);
+        timeEndInput.addEventListener('change', updateDuration);
 
-        document.getElementById('timeMinus').addEventListener('click', function() {
-            if (currentTimeHours > 0.25) {
-                currentTimeHours = Math.round((currentTimeHours - 0.25) * 100) / 100;
-                updateTimeDisplay();
-            }
-        });
-
-        document.getElementById('timeSkip').addEventListener('click', function() {
+        timeCancel.addEventListener('click', function() {
             timeModalOverlay.classList.remove('show');
-            handleTimeChoice(0);
         });
 
-        document.getElementById('timeSubmit').addEventListener('click', function() {
-            timeModalOverlay.classList.remove('show');
-            handleTimeChoice(currentTimeHours);
-        });
+        timeSubmitBtn.addEventListener('click', async function() {
+            const member = timeMember.value;
+            if (!member) { showToast('Select a technician', 'error'); return; }
+            const span = currentSpanHours();
+            if (span === null) { showToast('Enter date, start and end time', 'error'); return; }
+            if (span <= 0) { showToast('End time must be after start time', 'error'); return; }
 
-        function handleTimeChoice(hours) {
-            if (pendingAction === 'save') {
-                fireSave(hours);
-            } else if (pendingAction === 'resolve') {
-                if (messages.length > 0) {
-                    fireSave(hours);
-                    fireResolveEmail(0);
+            selectedMember = member;
+            setStoredMember(member);
+
+            const startISO = buildLocalDate(timeDate.value, timeStartInput.value).toISOString();
+            const endISO = buildLocalDate(timeDate.value, timeEndInput.value).toISOString();
+
+            timeSubmitBtn.disabled = true;
+            timeSubmitBtn.textContent = 'Saving...';
+
+            try {
+                const response = await fetch('/add-time', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        time_start: startISO,
+                        time_end: endISO,
+                        notes: timeNote.value.trim(),
+                        member_identifier: member,
+                    }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    timeModalOverlay.classList.remove('show');
+                    const hrs = (data.actual_hours != null ? data.actual_hours : span);
+                    showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member));
                 } else {
-                    fireResolveEmail(hours);
+                    showToast(data.error || 'Failed to log time', 'error');
                 }
+            } catch (err) {
+                showToast('Connection error — try again', 'error');
             }
-        }
+
+            timeSubmitBtn.disabled = false;
+            timeSubmitBtn.textContent = 'Save Time Entry';
+        });
 
         // --- Save ---
         function saveToTicket() {
             if (!hasNewMessages || messages.length === 0) return;
-            openTimeModal('save');
+            fireSave();
         }
 
-        function fireSave(hours) {
+        function fireSave() {
             saveBtn.disabled = true;
             resolveBtn.disabled = true;
             saveBtn.textContent = 'Saved';
@@ -1360,21 +1486,20 @@
                         ticket_id: TICKET.id,
                         messages: messages,
                         model: modelSelect.value,
-                        actual_hours: hours,
+                        member_identifier: selectedMember || null,
                     }),
                 });
             } catch (err) {}
 
-            var timeMsg = hours > 0 ? ' + ' + hours.toFixed(2) + ' hr time entry' : '';
-            showToast('Note' + timeMsg + ' is being saved...');
+            showToast('Note is being saved...');
         }
 
         // --- Resolve ---
         function resolveTicket() {
-            openTimeModal('resolve');
+            fireResolveEmail();
         }
 
-        async function fireResolveEmail(hours) {
+        async function fireResolveEmail() {
             var usingNotes = messages.length === 0;
             resolveStatus.textContent = usingNotes
                 ? 'Generating resolution note and customer email draft from ticket notes...'
@@ -1390,7 +1515,7 @@
                         ticket_id: TICKET.id,
                         messages: messages,
                         model: modelSelect.value,
-                        actual_hours: hours || 0,
+                        member_identifier: selectedMember || null,
                     }),
                 });
                 const data = await response.json();
@@ -1424,6 +1549,7 @@
                     body: JSON.stringify({
                         ticket_id: TICKET.id,
                         email_text: emailPreview.value,
+                        member_identifier: selectedMember || null,
                     }),
                 });
                 const data = await response.json();
@@ -1481,6 +1607,7 @@
             chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
         });
 
+        addTimeBtn.addEventListener('click', openTimeModal);
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         clearBtn.addEventListener('click', clearChat);
