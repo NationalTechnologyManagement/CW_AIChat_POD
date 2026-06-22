@@ -88,7 +88,11 @@ async def get_ticket(ticket_id: int) -> dict:
         "owner_name": _nested_name(data, "owner"),
         "resources": data.get("resources", ""),
         "type": _nested_name(data, "type"),
+        "type_id": _nested_field(data, "type", "id"),
         "subtype": _nested_name(data, "subType"),
+        "subtype_id": _nested_field(data, "subType", "id"),
+        "item": _nested_name(data, "item"),
+        "item_id": _nested_field(data, "item", "id"),
         "priority": _nested_name(data, "priority"),
         "initial_description": data.get("initialDescription", ""),
     }
@@ -310,6 +314,57 @@ async def set_ticket_status(ticket_id: int, status_id: int) -> dict:
     """Move a ticket to a new status via a JSON-Patch replace."""
     payload = [{"op": "replace", "path": "status/id", "value": status_id}]
     response = await _client.patch(f"/service/tickets/{ticket_id}", json=payload)
+    _handle_response(response)
+    return response.json()
+
+
+async def get_board_type_associations(board_id: int) -> list[dict]:
+    """Valid Type/Subtype/Item combinations for a board.
+
+    ConnectWise validates a ticket's categorization against these, and requires
+    it before a ticket can be resolved/closed. Returns flat combos; the caller
+    builds the dependent picker. Paginates so large boards aren't truncated.
+    """
+    combos: list[dict] = []
+    page = 1
+    while page <= 6:  # safety cap (6 * 1000 = 6000 combos)
+        response = await _client.get(
+            f"/service/boards/{board_id}/typeSubTypeItemAssociations",
+            params={"pageSize": 1000, "page": page},
+        )
+        _handle_response(response)
+        batch = response.json()
+        if not batch:
+            break
+        for a in batch:
+            combos.append({
+                "type": {"id": _nested_field(a, "type", "id"), "name": _nested_name(a, "type")},
+                "subtype": {"id": _nested_field(a, "subType", "id"), "name": _nested_name(a, "subType")},
+                "item": {"id": _nested_field(a, "item", "id"), "name": _nested_name(a, "item")},
+            })
+        if len(batch) < 1000:
+            break
+        page += 1
+    return combos
+
+
+async def update_ticket_category(
+    ticket_id: int,
+    type_id: int | None = None,
+    subtype_id: int | None = None,
+    item_id: int | None = None,
+) -> dict | None:
+    """Set a ticket's Type / Subtype / Item via JSON-Patch (only the parts given)."""
+    ops = []
+    if type_id:
+        ops.append({"op": "replace", "path": "type/id", "value": type_id})
+    if subtype_id:
+        ops.append({"op": "replace", "path": "subType/id", "value": subtype_id})
+    if item_id:
+        ops.append({"op": "replace", "path": "item/id", "value": item_id})
+    if not ops:
+        return None
+    response = await _client.patch(f"/service/tickets/{ticket_id}", json=ops)
     _handle_response(response)
     return response.json()
 

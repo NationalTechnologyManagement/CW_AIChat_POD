@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_ticket ON chat_messages (ticket_id, id);
+
+CREATE TABLE IF NOT EXISTS board_options (
+    board_id    INTEGER PRIMARY KEY,
+    data        TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -111,6 +117,51 @@ async def save_message(ticket_id: int, role: str, content) -> int | None:
             cur = await conn.execute(query, (ticket_id, role, content))
             result = await cur.fetchone()
             return result[0] if result else None
+
+
+async def get_board_options(board_id: int):
+    """Return (options_dict, age_seconds) for a board's cached type/subtype/item
+    tree, or None if not cached. Age lets the caller decide if it's stale."""
+    if not _conninfo:
+        return None
+
+    query = (
+        "SELECT data, EXTRACT(EPOCH FROM (NOW() - updated_at)) "
+        "FROM board_options WHERE board_id = %s"
+    )
+
+    if _use_sync:
+        loop = asyncio.get_event_loop()
+        rows = await loop.run_in_executor(None, partial(_sync_query, _conninfo, query, (board_id,)))
+    else:
+        async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
+            cur = await conn.execute(query, (board_id,))
+            rows = await cur.fetchall()
+
+    if not rows:
+        return None
+    try:
+        return json.loads(rows[0][0]), float(rows[0][1])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+async def save_board_options(board_id: int, data) -> None:
+    if not _conninfo:
+        return
+
+    payload = json.dumps(data)
+    query = (
+        "INSERT INTO board_options (board_id, data, updated_at) VALUES (%s, %s, NOW()) "
+        "ON CONFLICT (board_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()"
+    )
+
+    if _use_sync:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, partial(_sync_execute, _conninfo, query, (board_id, payload)))
+    else:
+        async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
+            await conn.execute(query, (board_id, payload))
 
 
 async def clear_messages(ticket_id: int) -> int:

@@ -348,6 +348,7 @@ async def pod(
             "saved_messages": [],
             "models": models,
             "members": [],
+            "board_options": EMPTY_OPTIONS,
             "current_member": member.strip(),
             "cw_manage_url": CW_MANAGE_URL,
             "error": None,
@@ -363,10 +364,13 @@ async def pod(
             _safe_get_members(),
         )
 
-        # Similar ticket search — non-critical
-        duplicates = []
+        # Board categorization options + similar tickets — both non-critical.
+        board_options, duplicates = EMPTY_OPTIONS, []
         try:
-            duplicates = await _find_similar_tickets(ticket, notes)
+            board_options, duplicates = await asyncio.gather(
+                _board_options(ticket.get("board_id")),
+                _find_similar_tickets(ticket, notes),
+            )
         except Exception:
             pass
 
@@ -376,6 +380,7 @@ async def pod(
             "duplicates": duplicates,
             "saved_messages": saved_messages,
             "members": members,
+            "board_options": board_options,
         })
     except CWAuthError:
         return render({"error": "ConnectWise connection error — check API keys"})
@@ -392,6 +397,62 @@ async def _safe_get_members() -> list[dict]:
     except Exception as e:
         print(f"[pod] Could not load members: {e}")
         return []
+
+
+BOARD_OPTIONS_TTL = 24 * 3600  # board type/subtype/item lists change rarely
+
+EMPTY_OPTIONS = {"types": [], "subtypes": {}, "items": {}}
+
+
+def _build_option_tree(combos: list[dict]) -> dict:
+    """Turn flat Type/Subtype/Item combos into a dependent picker tree:
+    types[], subtypes{typeId: [...]}, items{"typeId-subtypeId": [...]}."""
+    types, subtypes, items = {}, {}, {}
+    for c in combos:
+        t, s, it = c["type"], c["subtype"], c["item"]
+        if not t["id"]:
+            continue
+        types[t["id"]] = t["name"]
+        if s["id"]:
+            subtypes.setdefault(t["id"], {})[s["id"]] = s["name"]
+            if it["id"]:
+                items.setdefault(f"{t['id']}-{s['id']}", {})[it["id"]] = it["name"]
+
+    def _sorted(d):
+        return [{"id": k, "name": v} for k, v in sorted(d.items(), key=lambda kv: (kv[1] or "").lower())]
+
+    return {
+        "types": _sorted(types),
+        "subtypes": {str(tid): _sorted(d) for tid, d in subtypes.items()},
+        "items": {key: _sorted(d) for key, d in items.items()},
+    }
+
+
+async def _board_options(board_id: int | None) -> dict:
+    """Board categorization options, cached in Postgres (TTL refresh). Never fatal."""
+    if not board_id:
+        return EMPTY_OPTIONS
+
+    cached = None
+    try:
+        cached = await db.get_board_options(board_id)
+        if cached and cached[1] < BOARD_OPTIONS_TTL:
+            return cached[0]
+    except Exception as e:
+        print(f"[board-options] cache read failed for board {board_id}: {e}")
+
+    try:
+        combos = await cw_client.get_board_type_associations(board_id)
+        tree = _build_option_tree(combos)
+    except Exception as e:
+        print(f"[board-options] CW fetch failed for board {board_id}: {e}")
+        return cached[0] if cached else EMPTY_OPTIONS
+
+    try:
+        await db.save_board_options(board_id, tree)
+    except Exception as e:
+        print(f"[board-options] cache write failed for board {board_id}: {e}")
+    return tree
 
 
 @app.post("/chat")
@@ -547,6 +608,9 @@ class FinalizeResolveRequest(BaseModel):
     time_end: str | None = None
     send_email: bool = False
     email_text: str = ""
+    type_id: int | None = None
+    subtype_id: int | None = None
+    item_id: int | None = None
 
     @field_validator("time_start", "time_end")
     @classmethod
@@ -602,7 +666,7 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     so a resolved ticket always has its documentation in place."""
     has_time = bool(request.time_start and request.time_end)
     result = {"success": True, "time_logged": False, "internal_note_saved": False,
-              "email_sent": False, "status_set": False, "warnings": []}
+              "email_sent": False, "category_set": False, "status_set": False, "warnings": []}
 
     # Fetch the ticket up front; without it we can't attribute or resolve.
     try:
@@ -667,7 +731,22 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             print(f"[finalize] ticket {request.ticket_id} email failed: {e!r}")
             result["warnings"].append(f"Email not sent: {_cw_error(e)}")
 
-    # 3. Move to Resolved (best effort — notes/time are already saved).
+    # 3. Type/Subtype/Item — ConnectWise requires a valid categorization before
+    #    a ticket can be resolved. Set it (if provided) ahead of the status change.
+    if request.type_id or request.subtype_id or request.item_id:
+        try:
+            await cw_client.update_ticket_category(
+                request.ticket_id,
+                type_id=request.type_id,
+                subtype_id=request.subtype_id,
+                item_id=request.item_id,
+            )
+            result["category_set"] = True
+        except Exception as e:
+            print(f"[finalize] ticket {request.ticket_id} category change failed: {e!r}")
+            result["warnings"].append(f"Type/Subtype not set: {_cw_error(e)}")
+
+    # 4. Move to Resolved (best effort — notes/time are already saved).
     try:
         status_id = await _resolve_status_id(ticket.get("board_id"))
         if status_id:

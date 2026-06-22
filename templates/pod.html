@@ -809,6 +809,14 @@
         <div class="dialog resolve-modal">
             <p style="font-weight:600; margin-bottom:4px;">Resolve Ticket</p>
             <p class="resolve-status" id="resolveStatus">Generating customer email draft...</p>
+            <div id="categorySection" style="display:none">
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:2px;">Ticket categorization (required to resolve):</p>
+                <div class="time-row">
+                    <label class="time-field"><span>Type</span><select class="time-input" id="resType"></select></label>
+                    <label class="time-field"><span>Subtype</span><select class="time-input" id="resSubtype"></select></label>
+                    <label class="time-field"><span>Item</span><select class="time-input" id="resItem"></select></label>
+                </div>
+            </div>
             <div id="emailSection" style="display:none">
                 <p style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Customer Email Draft (editable):</p>
                 <textarea class="email-preview" id="emailPreview" rows="10"></textarea>
@@ -832,6 +840,7 @@
         const SAVED_MESSAGES = {{ saved_messages | tojson }};
         const MEMBERS = {{ members | tojson }};
         const CURRENT_MEMBER = {{ current_member | tojson }};
+        const BOARD_OPTIONS = {{ board_options | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
 
         // Extract token from URL so we can pass it on API calls
@@ -913,6 +922,10 @@
         const resolveStatus = document.getElementById('resolveStatus');
         const emailSection = document.getElementById('emailSection');
         const emailPreview = document.getElementById('emailPreview');
+        const categorySection = document.getElementById('categorySection');
+        const resType = document.getElementById('resType');
+        const resSubtype = document.getElementById('resSubtype');
+        const resItem = document.getElementById('resItem');
         const attachBtn = document.getElementById('attachBtn');
         const fileInput = document.getElementById('fileInput');
         const attachmentStrip = document.getElementById('attachmentStrip');
@@ -1625,12 +1638,52 @@
             openTimeModal('resolve');
         }
 
-        // Step 2: review the customer email, then finalize everything.
+        // --- Type/Subtype/Item picker (cascading, prefilled with the ticket's current) ---
+        function fillCatSelect(sel, options, selectedId, placeholder) {
+            sel.innerHTML = '';
+            const ph = document.createElement('option');
+            ph.value = '';
+            ph.textContent = placeholder;
+            sel.appendChild(ph);
+            (options || []).forEach(function(o) {
+                const opt = document.createElement('option');
+                opt.value = String(o.id);
+                opt.textContent = o.name;
+                sel.appendChild(opt);
+            });
+            sel.value = (selectedId != null && (options || []).some(function(o) { return String(o.id) === String(selectedId); }))
+                ? String(selectedId) : '';
+        }
+
+        function refreshSubtypes(preSub, preItem) {
+            const subs = (BOARD_OPTIONS.subtypes && BOARD_OPTIONS.subtypes[resType.value]) || [];
+            fillCatSelect(resSubtype, subs, preSub, subs.length ? 'Select subtype…' : '(none)');
+            refreshItems(preItem);
+        }
+        function refreshItems(preItem) {
+            const items = (BOARD_OPTIONS.items && BOARD_OPTIONS.items[resType.value + '-' + resSubtype.value]) || [];
+            fillCatSelect(resItem, items, preItem, items.length ? 'Select item…' : '(none)');
+        }
+        resType.addEventListener('change', function() { refreshSubtypes(null, null); });
+        resSubtype.addEventListener('change', function() { refreshItems(null); });
+
+        function buildCategoryPicker() {
+            if (!BOARD_OPTIONS || !BOARD_OPTIONS.types || BOARD_OPTIONS.types.length === 0) {
+                categorySection.style.display = 'none';
+                return;
+            }
+            categorySection.style.display = 'block';
+            fillCatSelect(resType, BOARD_OPTIONS.types, TICKET.type_id, 'Select type…');
+            refreshSubtypes(TICKET.subtype_id, TICKET.item_id);
+        }
+
+        // Step 2: review the customer email + categorization, then finalize.
         function openResolveEmailStep() {
             resolveStatus.style.color = '';
-            resolveStatus.textContent = 'Review the email to the customer. Internal notes'
+            resolveStatus.textContent = 'Set the ticket type/subtype and review the email, then resolve. Internal notes'
                 + (resolveState.timeStart ? ' and time' : '')
                 + ' will be saved and the ticket marked resolved.';
+            buildCategoryPicker();
             emailSection.style.display = 'block';
             emailPreview.value = resolveState.customerEmail || '';
             resolveSkipEmailBtn.textContent = "Resolve, Don't Email";
@@ -1657,6 +1710,9 @@
                         time_end: resolveState.timeEnd,
                         send_email: sendEmail,
                         email_text: sendEmail ? emailPreview.value : '',
+                        type_id: resType.value ? parseInt(resType.value, 10) : null,
+                        subtype_id: resSubtype.value ? parseInt(resSubtype.value, 10) : null,
+                        item_id: resItem.value ? parseInt(resItem.value, 10) : null,
                     }),
                 });
                 const data = await response.json();
