@@ -77,6 +77,7 @@ async def get_ticket(ticket_id: int) -> dict:
         "id": data.get("id"),
         "summary": data.get("summary", ""),
         "board": _nested_name(data, "board"),
+        "board_id": _nested_field(data, "board", "id"),
         "status": _nested_name(data, "status"),
         "company_id": _nested_field(data, "company", "id"),
         "company_name": _nested_name(data, "company"),
@@ -221,6 +222,7 @@ async def create_time_entry(
     time_end: str,
     notes: str = "",
     member_identifier: str | None = None,
+    add_to_internal: bool = False,
 ) -> dict:
     """Create a time entry from explicit start/end timestamps.
 
@@ -228,6 +230,9 @@ async def create_time_entry(
     actualHours is derived from the span so the entry reflects the real worked
     time. The entry is attributed to member_identifier — pass the tech who
     actually did the work so it is never logged against the API/automation user.
+
+    When add_to_internal is set, the notes are also posted to the ticket's
+    Internal Analysis tab, so a single entry covers both time and internal notes.
     """
     start_dt = _parse_iso(time_start)
     end_dt = _parse_iso(time_end)
@@ -242,6 +247,7 @@ async def create_time_entry(
     }
     if notes:
         payload["notes"] = notes
+        payload["addToInternalAnalysisFlag"] = add_to_internal
     if member_identifier:
         payload["member"] = {"identifier": member_identifier}
 
@@ -281,6 +287,31 @@ async def get_members() -> list[dict]:
         name = " ".join(p for p in [m.get("firstName"), m.get("lastName")] if p).strip()
         result.append({"identifier": identifier, "name": name or identifier})
     return result
+
+
+async def get_board_statuses(board_id: int) -> list[dict]:
+    """Statuses defined on a service board (used to resolve a status by name)."""
+    response = await _client.get(
+        f"/service/boards/{board_id}/statuses",
+        params={"pageSize": 200, "orderBy": "sortOrder asc"},
+    )
+    _handle_response(response)
+    return [
+        {
+            "id": s.get("id"),
+            "name": s.get("name", ""),
+            "inactive": s.get("inactiveFlag", False),
+        }
+        for s in response.json()
+    ]
+
+
+async def set_ticket_status(ticket_id: int, status_id: int) -> dict:
+    """Move a ticket to a new status via a JSON-Patch replace."""
+    payload = [{"op": "replace", "path": "status/id", "value": status_id}]
+    response = await _client.patch(f"/service/tickets/{ticket_id}", json=payload)
+    _handle_response(response)
+    return response.json()
 
 
 def _nested_name(data: dict, key: str) -> str:

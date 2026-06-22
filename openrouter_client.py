@@ -266,29 +266,31 @@ async def extract_search_keywords(ticket_summary: str) -> list[str]:
     return [k for k in keywords if 2 < len(k) < 30]
 
 
-async def generate_resolution_note(source_text: str, model: str) -> str:
+async def generate_internal_resolution_note(source_text: str, model: str) -> str:
+    """Internal technician resolution note — NOT shown to the customer.
+
+    Goes into the ticket's Internal Analysis tab and the resolving time entry's
+    notes, so it can include the technical specifics a tech needs on the record.
+    """
     system_prompt = (
         "You are a technical note writer for an MSP ticketing system. "
-        "Write a resolution note for this support ticket based on the source material below. "
-        "The source may be a technician chat transcript OR raw internal ticket notes — "
-        "treat internal commentary as reference only; do not copy it verbatim.\n\n"
-        "RULES (the resolution note may be visible to the customer — treat it as customer-facing):\n"
-        "- Write a concise paragraph summary of what the issue was, what was done, and the outcome\n"
-        "- NEVER mention pricing, costs, billing, or fees\n"
-        "- NEVER admit fault, wrongdoing, or blame anyone (customer, technician, vendor, or third party)\n"
-        "- NEVER mention vendor names, internal tools, internal ticket IDs, or internal team discussions\n"
-        "- NEVER include diagnostic asides, speculation, frustration, or raw log/error dumps\n"
-        "- Omit anything inappropriate for the customer to read\n"
-        "- Keep it professional and solution-focused\n"
-        "- Write in past tense\n"
-        "- End the note with a new line: STATUS: Resolved\n\n"
-        "Format: Start with '[Resolution - CW Chat Pod]' on the first line, "
-        "then the paragraph summary, then 'STATUS: Resolved' on the last line."
+        "Write an INTERNAL technician resolution note from the source material "
+        "(a technician chat transcript OR raw internal ticket notes). "
+        "This note is INTERNAL ONLY — it is never shown to the customer, so include "
+        "the technical specifics another tech would need.\n\n"
+        "Use EXACTLY this format:\n\n"
+        "[Resolution - CW Chat Pod]\n\n"
+        "ISSUE:\n- What the problem was\n\n"
+        "ROOT CAUSE:\n- Why it happened (omit this section if not determined)\n\n"
+        "RESOLUTION:\n- What was done to fix it — specific steps, commands, console paths, settings\n\n"
+        "STATUS: Resolved\n\n"
+        "Rules: Write in past tense. Be concise — bullet points, not paragraphs. "
+        "No conversational filler. Only include sections that have content."
     )
 
     return await _call_openrouter(
         system_prompt,
-        f"Write a resolution note based on this support context:\n\n{source_text}",
+        f"Write an internal resolution note based on this support context:\n\n{source_text}",
         model,
     )
 

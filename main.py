@@ -29,6 +29,7 @@ if not POD_SECRET:
     raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
+RESOLVE_STATUS_NAME = os.getenv("RESOLVE_STATUS_NAME", "Resolved")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -479,11 +480,14 @@ async def add_time(request: AddTimeRequest):
 
 @app.post("/resolve")
 async def resolve(request: ResolveRequest):
-    """Generate resolution note (saved via /save-note) + customer email draft.
+    """Generate (but do not yet save) the internal tech note + customer email.
 
-    If chat messages are provided, they are used as the source. Otherwise the
-    ticket's existing notes are pulled from ConnectWise and used instead, so
-    the tech can resolve directly from ticket context without typing a chat.
+    Nothing is written to ConnectWise here — the tech reviews the drafts, logs
+    time (or skips), and only then is everything committed via /finalize-resolve.
+
+    If chat messages are provided, they are the source. Otherwise the ticket's
+    existing notes are pulled from ConnectWise, so the tech can resolve directly
+    from ticket context without typing a chat.
     """
     try:
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
@@ -513,8 +517,8 @@ async def resolve(request: ResolveRequest):
                     lines.append(f"- [{flag}] {member} ({date}): {text}")
             source_text = "\n".join(lines)
 
-        resolution_note, customer_email = await asyncio.gather(
-            openrouter_client.generate_resolution_note(source_text, request.model),
+        internal_note, customer_email = await asyncio.gather(
+            openrouter_client.generate_internal_resolution_note(source_text, request.model),
             openrouter_client.generate_customer_email(
                 source_text, request.model,
                 ticket_summary=ticket.get("summary", ""),
@@ -522,18 +526,9 @@ async def resolve(request: ResolveRequest):
             ),
         )
 
-        # Attribute the resolution note to the tech resolving it; fall back to owner.
-        author = request.member_identifier or ticket.get("owner_identifier")
-
-        asyncio.create_task(_save_resolution_background(
-            ticket_id=request.ticket_id,
-            text=resolution_note,
-            member_identifier=author,
-        ))
-
         return {
             "success": True,
-            "resolution_note": resolution_note,
+            "internal_note": internal_note,
             "customer_email": customer_email,
         }
 
@@ -544,17 +539,120 @@ async def resolve(request: ResolveRequest):
         )
 
 
-async def _save_resolution_background(ticket_id: int, text: str, member_identifier: str | None):
-    try:
-        await cw_client.create_ticket_note(
-            ticket_id=ticket_id,
-            text=text,
-            member_identifier=member_identifier,
-            resolution=True,
+class FinalizeResolveRequest(BaseModel):
+    ticket_id: int
+    internal_note: str
+    member_identifier: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    send_email: bool = False
+    email_text: str = ""
+
+    @field_validator("time_start", "time_end")
+    @classmethod
+    def time_must_parse(cls, v):
+        if v is None:
+            return v
+        try:
+            datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise ValueError("Times must be ISO-8601 timestamps")
+        return v
+
+
+async def _resolve_status_id(board_id: int) -> int | None:
+    """Find the board's resolved status id (RESOLVE_STATUS_NAME, then any active
+    'resolved'-ish status that isn't an automation/DNU status)."""
+    if not board_id:
+        return None
+    statuses = await cw_client.get_board_statuses(board_id)
+    active = [s for s in statuses if not s["inactive"]]
+    target = next(
+        (s for s in active if s["name"].strip().lower() == RESOLVE_STATUS_NAME.strip().lower()),
+        None,
+    )
+    if not target:
+        target = next(
+            (s for s in active
+             if "resolved" in s["name"].lower()
+             and "automation" not in s["name"].lower()
+             and not s["name"].lower().startswith("dnu")),
+            None,
         )
-        print(f"[resolve] Resolution note saved for ticket {ticket_id}")
+    return target["id"] if target else None
+
+
+@app.post("/finalize-resolve")
+async def finalize_resolve(request: FinalizeResolveRequest):
+    """Commit a resolution: internal note (into the time entry and/or Internal
+    Analysis), optional customer email, and move the ticket to Resolved — all
+    attributed to the tech. Notes and time are written before the status flips,
+    so a resolved ticket always has its documentation in place."""
+    has_time = bool(request.time_start and request.time_end)
+    result = {"success": True, "time_logged": False, "internal_note_saved": False,
+              "email_sent": False, "status_set": False, "warnings": []}
+    try:
+        ticket = await cw_client.get_ticket(request.ticket_id)
+        author = request.member_identifier or ticket.get("owner_identifier")
+
+        # 1. Internal tech note — into the time entry (also posted to Internal
+        #    Analysis) when time is logged, otherwise as a standalone internal note.
+        if has_time:
+            await cw_client.create_time_entry(
+                ticket_id=request.ticket_id,
+                time_start=request.time_start,
+                time_end=request.time_end,
+                notes=request.internal_note,
+                member_identifier=author,
+                add_to_internal=True,
+            )
+            result["time_logged"] = True
+            result["internal_note_saved"] = True
+        else:
+            await cw_client.create_ticket_note(
+                ticket_id=request.ticket_id,
+                text=request.internal_note,
+                member_identifier=author,
+            )
+            result["internal_note_saved"] = True
+
+        # 2. Customer email (best effort — never blocks the resolve).
+        if request.send_email and request.email_text.strip():
+            try:
+                await cw_client.send_email_to_contact(
+                    ticket_id=request.ticket_id,
+                    text=request.email_text,
+                    member_identifier=author,
+                )
+                result["email_sent"] = True
+            except Exception as e:
+                result["warnings"].append(f"Email not sent: {str(e)[:80]}")
+
+        # 3. Move to Resolved (after notes/time are in).
+        status_id = await _resolve_status_id(ticket.get("board_id"))
+        if status_id:
+            await cw_client.set_ticket_status(request.ticket_id, status_id)
+            result["status_set"] = True
+        else:
+            result["warnings"].append(
+                f"No '{RESOLVE_STATUS_NAME}' status on this board — left unchanged"
+            )
+
+        parts = []
+        if result["time_logged"]:
+            parts.append("time logged")
+        parts.append("internal note saved")
+        if result["email_sent"]:
+            parts.append("email sent")
+        parts.append("ticket resolved" if result["status_set"] else "status unchanged")
+        result["message"] = "Resolved — " + ", ".join(parts)
+        return result
+
     except Exception as e:
-        print(f"[resolve] Failed to save note for ticket {ticket_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"Failed to finalize: {str(e)[:120]}", **result},
+        )
 
 
 class SendEmailRequest(BaseModel):

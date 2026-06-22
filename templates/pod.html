@@ -674,6 +674,16 @@
             background: #e5e7eb;
         }
 
+        .btn-no-time {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-no-time:hover {
+            background: #e5e7eb;
+        }
+
         .btn-confirm {
             background: var(--accent);
             color: #fff;
@@ -764,7 +774,8 @@
     <!-- Time Entry Modal -->
     <div class="dialog-overlay" id="timeModalOverlay">
         <div class="dialog time-modal">
-            <p style="font-weight:600; margin-bottom:4px;">Add Time &mdash; Ticket #{{ ticket.id }}</p>
+            <p style="font-weight:600; margin-bottom:4px;" id="timeModalTitle">Add Time &mdash; Ticket #{{ ticket.id }}</p>
+            <p class="resolve-status" id="timeModalHint" style="display:none">Log the time you worked, or skip if no time is needed.</p>
             <label class="time-field">
                 <span>Technician</span>
                 <select class="time-input" id="timeMember"></select>
@@ -787,6 +798,7 @@
             <textarea class="modal-textarea" id="timeNote" placeholder="What did you work on? (optional)"></textarea>
             <div class="dialog-buttons">
                 <button class="btn btn-cancel" id="timeCancel">Cancel</button>
+                <button class="btn btn-no-time" id="timeSkip" style="display:none">Skip Time</button>
                 <button class="btn btn-confirm" id="timeSubmit">Save Time Entry</button>
             </div>
         </div>
@@ -893,7 +905,10 @@
         const timeNote = document.getElementById('timeNote');
         const timeDuration = document.getElementById('timeDuration');
         const timeCancel = document.getElementById('timeCancel');
+        const timeSkipBtn = document.getElementById('timeSkip');
         const timeSubmitBtn = document.getElementById('timeSubmit');
+        const timeModalTitle = document.getElementById('timeModalTitle');
+        const timeModalHint = document.getElementById('timeModalHint');
         const resolveModalOverlay = document.getElementById('resolveModalOverlay');
         const resolveStatus = document.getElementById('resolveStatus');
         const emailSection = document.getElementById('emailSection');
@@ -1416,15 +1431,33 @@
             timeDuration.textContent = 'Duration: ' + span.toFixed(2) + ' hr';
         }
 
-        function openTimeModal() {
+        // 'add' = standalone Add Time button (posts immediately);
+        // 'resolve' = part of the resolve flow (carries time into finalize, allows Skip).
+        let timeMode = 'add';
+
+        function openTimeModal(mode) {
+            timeMode = mode || 'add';
             const now = new Date();
             const start = new Date(now.getTime() - 30 * 60000);  // default to a 30-min block ending now
             timeDate.value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
             timeStartInput.value = pad2(start.getHours()) + ':' + pad2(start.getMinutes());
             timeEndInput.value = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
-            timeNote.value = '';
             populateMemberPicker();
             updateDuration();
+
+            if (timeMode === 'resolve') {
+                timeModalTitle.textContent = 'Log Time — Ticket #' + TICKET.id;
+                timeModalHint.style.display = 'block';
+                timeNote.value = (resolveState && resolveState.internalNote) || '';
+                timeSkipBtn.style.display = '';
+                timeSubmitBtn.textContent = 'Add Time';
+            } else {
+                timeModalTitle.textContent = 'Add Time — Ticket #' + TICKET.id;
+                timeModalHint.style.display = 'none';
+                timeNote.value = '';
+                timeSkipBtn.style.display = 'none';
+                timeSubmitBtn.textContent = 'Save Time Entry';
+            }
             timeModalOverlay.classList.add('show');
         }
 
@@ -1437,6 +1470,20 @@
 
         timeCancel.addEventListener('click', function() {
             timeModalOverlay.classList.remove('show');
+            if (timeMode === 'resolve') abortResolve();
+        });
+
+        // Skip Time (resolve flow only) — continue to the email step, no time logged.
+        timeSkipBtn.addEventListener('click', function() {
+            const member = timeMember.value;
+            if (!member) { showToast('Select a technician', 'error'); return; }
+            selectedMember = member; setStoredMember(member);
+            resolveState.member = member;
+            resolveState.internalNote = timeNote.value.trim() || resolveState.internalNote;
+            resolveState.timeStart = null;
+            resolveState.timeEnd = null;
+            timeModalOverlay.classList.remove('show');
+            openResolveEmailStep();
         });
 
         timeSubmitBtn.addEventListener('click', async function() {
@@ -1451,6 +1498,17 @@
 
             const startISO = buildLocalDate(timeDate.value, timeStartInput.value).toISOString();
             const endISO = buildLocalDate(timeDate.value, timeEndInput.value).toISOString();
+
+            // Resolve flow: carry the time into finalize rather than posting now.
+            if (timeMode === 'resolve') {
+                resolveState.member = member;
+                resolveState.internalNote = timeNote.value.trim() || resolveState.internalNote;
+                resolveState.timeStart = startISO;
+                resolveState.timeEnd = endISO;
+                timeModalOverlay.classList.remove('show');
+                openResolveEmailStep();
+                return;
+            }
 
             timeSubmitBtn.disabled = true;
             timeSubmitBtn.textContent = 'Saving...';
@@ -1511,19 +1569,27 @@
             showToast('Note is being saved...');
         }
 
-        // --- Resolve ---
-        function resolveTicket() {
-            fireResolveEmail();
+        // --- Resolve (multi-step) ---
+        // Click Resolve -> generate internal note + customer email (saved to
+        // nothing yet) -> log time or skip -> review email -> finalize: the
+        // internal note (into the time entry and/or Internal Analysis), the
+        // optional email, and the Resolved status are all committed as the tech.
+        let resolveState = null;  // { internalNote, customerEmail, member, timeStart, timeEnd }
+        const resolveSkipEmailBtn = document.getElementById('resolveSkipEmail');
+        const resolveSendEmailBtn = document.getElementById('resolveSendEmail');
+
+        function abortResolve() {
+            resolveState = null;
+            resolveBtn.disabled = false;
+            resolveBtn.textContent = 'Resolve';
         }
 
-        async function fireResolveEmail() {
-            var usingNotes = messages.length === 0;
-            resolveStatus.textContent = usingNotes
-                ? 'Generating resolution note and customer email draft from ticket notes...'
-                : 'Generating customer email draft...';
-            emailSection.style.display = 'none';
-            resolveModalOverlay.classList.add('show');
+        async function resolveTicket() {
+            if (resolveState) return;  // already mid-resolve
+            resolveBtn.disabled = true;
+            resolveBtn.textContent = 'Preparing...';
 
+            let data;
             try {
                 const response = await fetch('/resolve', {
                     method: 'POST',
@@ -1535,55 +1601,89 @@
                         member_identifier: selectedMember || null,
                     }),
                 });
-                const data = await response.json();
-
-                if (data.success) {
-                    resolveStatus.textContent = 'Resolution note saved. Review and edit the email below:';
-                    emailSection.style.display = 'block';
-                    emailPreview.value = data.customer_email;
-                } else {
-                    resolveStatus.textContent = data.error || 'Failed to generate email';
-                }
+                data = await response.json();
             } catch (err) {
-                resolveStatus.textContent = 'Connection error — try again';
+                showToast('Connection error — try again', 'error');
+                abortResolve();
+                return;
             }
+            if (!data || !data.success) {
+                showToast((data && data.error) || 'Failed to prepare resolution', 'error');
+                abortResolve();
+                return;
+            }
+
+            resolveState = {
+                internalNote: data.internal_note,
+                customerEmail: data.customer_email,
+                member: selectedMember || '',
+                timeStart: null,
+                timeEnd: null,
+            };
+            resolveBtn.textContent = 'Resolve';
+            // Step 1: time entry (with Skip); the note is prefilled with the internal note.
+            openTimeModal('resolve');
         }
 
-        document.getElementById('resolveSkipEmail').addEventListener('click', function() {
-            resolveModalOverlay.classList.remove('show');
-            showToast('Resolution saved — no email sent');
-        });
+        // Step 2: review the customer email, then finalize everything.
+        function openResolveEmailStep() {
+            resolveStatus.textContent = 'Review the email to the customer. Internal notes'
+                + (resolveState.timeStart ? ' and time' : '')
+                + ' will be saved and the ticket marked resolved.';
+            emailSection.style.display = 'block';
+            emailPreview.value = resolveState.customerEmail || '';
+            resolveSkipEmailBtn.textContent = "Resolve, Don't Email";
+            resolveSendEmailBtn.textContent = 'Send Email & Resolve';
+            resolveSkipEmailBtn.disabled = false;
+            resolveSendEmailBtn.disabled = false;
+            resolveModalOverlay.classList.add('show');
+        }
 
-        document.getElementById('resolveSendEmail').addEventListener('click', async function() {
-            const btn = document.getElementById('resolveSendEmail');
-            btn.disabled = true;
-            btn.textContent = 'Sending...';
+        async function finalizeResolve(sendEmail) {
+            resolveSkipEmailBtn.disabled = true;
+            resolveSendEmailBtn.disabled = true;
+            resolveStatus.textContent = 'Finalizing — saving notes, time, and resolving the ticket...';
 
             try {
-                const response = await fetch('/send-email', {
+                const response = await fetch('/finalize-resolve', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
                     body: JSON.stringify({
                         ticket_id: TICKET.id,
-                        email_text: emailPreview.value,
-                        member_identifier: selectedMember || null,
+                        internal_note: resolveState.internalNote,
+                        member_identifier: resolveState.member || selectedMember || null,
+                        time_start: resolveState.timeStart,
+                        time_end: resolveState.timeEnd,
+                        send_email: sendEmail,
+                        email_text: sendEmail ? emailPreview.value : '',
                     }),
                 });
                 const data = await response.json();
 
                 if (data.success) {
                     resolveModalOverlay.classList.remove('show');
-                    showToast(data.message);
+                    showToast(data.message || 'Ticket resolved');
+                    if (data.warnings && data.warnings.length) {
+                        setTimeout(function() { showToast(data.warnings.join(' • '), 'error'); }, 1200);
+                    }
+                    resolveState = null;
+                    resolveBtn.disabled = true;
+                    resolveBtn.textContent = 'Resolved';
+                    saveBtn.disabled = true;
                 } else {
-                    showToast(data.error || 'Failed to send', 'error');
+                    resolveStatus.textContent = data.error || 'Failed to finalize';
+                    resolveSkipEmailBtn.disabled = false;
+                    resolveSendEmailBtn.disabled = false;
                 }
             } catch (err) {
-                showToast('Connection error', 'error');
+                resolveStatus.textContent = 'Connection error — try again';
+                resolveSkipEmailBtn.disabled = false;
+                resolveSendEmailBtn.disabled = false;
             }
+        }
 
-            btn.disabled = false;
-            btn.textContent = 'Send to Contact';
-        });
+        resolveSkipEmailBtn.addEventListener('click', function() { finalizeResolve(false); });
+        resolveSendEmailBtn.addEventListener('click', function() { finalizeResolve(true); });
 
         // --- Clear Chat ---
         async function clearChat() {
