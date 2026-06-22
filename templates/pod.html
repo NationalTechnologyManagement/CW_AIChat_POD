@@ -831,9 +831,10 @@
         let hasNewMessages = false;
         let pendingAttachments = [];  // {kind:'image', dataUrl, name} | {kind:'text', text, name}
 
-        // The tech operating the pod. Defaults to the CW-supplied member (if the
-        // pod URL passes one) or the tech's last choice, persisted locally. Used
-        // so time entries, notes, and emails post as the real tech — not the API user.
+        // The tech the time/notes post as — so they're attributed to the real
+        // tech, not the API user. Defaults to whoever the ticket is assigned to
+        // (its owner), then the ticket's first resource, then a CW-supplied member
+        // or the tech's last choice. Always overridable in the Add Time dropdown.
         const MEMBER_STORAGE_KEY = 'cw_pod_member';
         function getStoredMember() {
             try { return localStorage.getItem(MEMBER_STORAGE_KEY) || ''; } catch (e) { return ''; }
@@ -841,7 +842,23 @@
         function setStoredMember(id) {
             try { localStorage.setItem(MEMBER_STORAGE_KEY, id); } catch (e) {}
         }
-        let selectedMember = CURRENT_MEMBER || getStoredMember() || '';
+        function memberInList(id) {
+            return !!id && MEMBERS.some(function(m) { return m.identifier === id; });
+        }
+        function pickDefaultMember() {
+            // The ticket's assigned tech (owner) wins.
+            if (memberInList(TICKET.owner_identifier)) return TICKET.owner_identifier;
+            // Otherwise the first listed resource on the ticket.
+            if (TICKET.resources) {
+                const first = String(TICKET.resources).split(',')[0].trim();
+                if (memberInList(first)) return first;
+            }
+            // Fall back to a CW-supplied member or the tech's last choice.
+            if (memberInList(CURRENT_MEMBER)) return CURRENT_MEMBER;
+            if (memberInList(getStoredMember())) return getStoredMember();
+            return '';
+        }
+        let selectedMember = pickDefaultMember();
         function memberName(id) {
             const m = MEMBERS.find(function(x) { return x.identifier === id; });
             return m ? m.name : id;
