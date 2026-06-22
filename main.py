@@ -560,6 +560,18 @@ class FinalizeResolveRequest(BaseModel):
         return v
 
 
+def _cw_error(e: Exception) -> str:
+    """Human-readable detail from a ConnectWise (or other) error for the UI."""
+    if isinstance(e, CWAPIError):
+        detail = (e.detail or "").strip().replace("\n", " ")
+        return f"ConnectWise error {e.status_code}{(': ' + detail[:180]) if detail else ''}"
+    if isinstance(e, CWAuthError):
+        return "ConnectWise authentication failed"
+    if isinstance(e, CWNotFoundError):
+        return "Record not found in ConnectWise"
+    return str(e)[:180] or e.__class__.__name__
+
+
 async def _resolve_status_id(board_id: int) -> int | None:
     """Find the board's resolved status id (RESOLVE_STATUS_NAME, then any active
     'resolved'-ish status that isn't an automation/DNU status)."""
@@ -591,14 +603,23 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     has_time = bool(request.time_start and request.time_end)
     result = {"success": True, "time_logged": False, "internal_note_saved": False,
               "email_sent": False, "status_set": False, "warnings": []}
+
+    # Fetch the ticket up front; without it we can't attribute or resolve.
     try:
         ticket = await cw_client.get_ticket(request.ticket_id)
-        author = request.member_identifier or ticket.get("owner_identifier")
+    except Exception as e:
+        print(f"[finalize] ticket {request.ticket_id} load failed: {e!r}")
+        return JSONResponse(status_code=500, content={
+            "success": False, "error": f"Could not load ticket: {_cw_error(e)}", **result})
 
-        # 1. Internal tech note — into the time entry (also posted to Internal
-        #    Analysis) when time is logged, otherwise as a standalone internal note.
+    author = request.member_identifier or ticket.get("owner_identifier")
+
+    # 1. The critical write: internal note, into the time entry (also posted to
+    #    Internal Analysis) when time is logged, otherwise a standalone note.
+    #    If this fails we abort cleanly — nothing saved — so a retry won't double up.
+    try:
         if has_time:
-            await cw_client.create_time_entry(
+            entry = await cw_client.create_time_entry(
                 ticket_id=request.ticket_id,
                 time_start=request.time_start,
                 time_end=request.time_end,
@@ -608,6 +629,7 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             )
             result["time_logged"] = True
             result["internal_note_saved"] = True
+            print(f"[finalize] ticket {request.ticket_id}: time entry {entry.get('id')} as {author}")
         else:
             await cw_client.create_ticket_note(
                 ticket_id=request.ticket_id,
@@ -615,44 +637,51 @@ async def finalize_resolve(request: FinalizeResolveRequest):
                 member_identifier=author,
             )
             result["internal_note_saved"] = True
+            print(f"[finalize] ticket {request.ticket_id}: internal note as {author}")
+    except Exception as e:
+        step = "time entry" if has_time else "internal note"
+        print(f"[finalize] ticket {request.ticket_id} {step} failed: {e!r}")
+        return JSONResponse(status_code=500, content={
+            "success": False,
+            "error": f"Could not save the {step}: {_cw_error(e)}. Nothing was changed — adjust and try again.",
+            **result})
 
-        # 2. Customer email (best effort — never blocks the resolve).
-        if request.send_email and request.email_text.strip():
-            try:
-                await cw_client.send_email_to_contact(
-                    ticket_id=request.ticket_id,
-                    text=request.email_text,
-                    member_identifier=author,
-                )
-                result["email_sent"] = True
-            except Exception as e:
-                result["warnings"].append(f"Email not sent: {str(e)[:80]}")
+    # 2. Customer email (best effort — never blocks the resolve).
+    if request.send_email and request.email_text.strip():
+        try:
+            await cw_client.send_email_to_contact(
+                ticket_id=request.ticket_id,
+                text=request.email_text,
+                member_identifier=author,
+            )
+            result["email_sent"] = True
+        except Exception as e:
+            print(f"[finalize] ticket {request.ticket_id} email failed: {e!r}")
+            result["warnings"].append(f"Email not sent: {_cw_error(e)}")
 
-        # 3. Move to Resolved (after notes/time are in).
+    # 3. Move to Resolved (best effort — notes/time are already saved).
+    try:
         status_id = await _resolve_status_id(ticket.get("board_id"))
         if status_id:
             await cw_client.set_ticket_status(request.ticket_id, status_id)
             result["status_set"] = True
         else:
             result["warnings"].append(
-                f"No '{RESOLVE_STATUS_NAME}' status on this board — left unchanged"
+                f"No '{RESOLVE_STATUS_NAME}' status on this board — status left unchanged"
             )
-
-        parts = []
-        if result["time_logged"]:
-            parts.append("time logged")
-        parts.append("internal note saved")
-        if result["email_sent"]:
-            parts.append("email sent")
-        parts.append("ticket resolved" if result["status_set"] else "status unchanged")
-        result["message"] = "Resolved — " + ", ".join(parts)
-        return result
-
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": f"Failed to finalize: {str(e)[:120]}", **result},
-        )
+        print(f"[finalize] ticket {request.ticket_id} status change failed: {e!r}")
+        result["warnings"].append(f"Status not changed: {_cw_error(e)}")
+
+    parts = []
+    if result["time_logged"]:
+        parts.append("time logged")
+    parts.append("internal note saved")
+    if result["email_sent"]:
+        parts.append("email sent")
+    parts.append("ticket resolved" if result["status_set"] else "status NOT changed")
+    result["message"] = "Done — " + ", ".join(parts)
+    return result
 
 
 class SendEmailRequest(BaseModel):

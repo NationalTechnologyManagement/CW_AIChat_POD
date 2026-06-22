@@ -1474,11 +1474,11 @@
         });
 
         // Skip Time (resolve flow only) — continue to the email step, no time logged.
+        // A technician isn't required to skip; attribution falls back to the ticket owner.
         timeSkipBtn.addEventListener('click', function() {
             const member = timeMember.value;
-            if (!member) { showToast('Select a technician', 'error'); return; }
-            selectedMember = member; setStoredMember(member);
-            resolveState.member = member;
+            if (member) { selectedMember = member; setStoredMember(member); }
+            resolveState.member = member || selectedMember || '';
             resolveState.internalNote = timeNote.value.trim() || resolveState.internalNote;
             resolveState.timeStart = null;
             resolveState.timeEnd = null;
@@ -1627,6 +1627,7 @@
 
         // Step 2: review the customer email, then finalize everything.
         function openResolveEmailStep() {
+            resolveStatus.style.color = '';
             resolveStatus.textContent = 'Review the email to the customer. Internal notes'
                 + (resolveState.timeStart ? ' and time' : '')
                 + ' will be saved and the ticket marked resolved.';
@@ -1671,12 +1672,17 @@
                     resolveBtn.textContent = 'Resolved';
                     saveBtn.disabled = true;
                 } else {
-                    resolveStatus.textContent = data.error || 'Failed to finalize';
+                    const msg = data.error || 'Failed to finalize';
+                    resolveStatus.textContent = msg;
+                    resolveStatus.style.color = 'var(--error)';
+                    showToast(msg, 'error');
                     resolveSkipEmailBtn.disabled = false;
                     resolveSendEmailBtn.disabled = false;
                 }
             } catch (err) {
                 resolveStatus.textContent = 'Connection error — try again';
+                resolveStatus.style.color = 'var(--error)';
+                showToast('Connection error — try again', 'error');
                 resolveSkipEmailBtn.disabled = false;
                 resolveSendEmailBtn.disabled = false;
             }
