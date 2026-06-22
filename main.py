@@ -610,9 +610,16 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     except Exception as e:
         print(f"[finalize] ticket {request.ticket_id} load failed: {e!r}")
         return JSONResponse(status_code=500, content={
-            "success": False, "error": f"Could not load ticket: {_cw_error(e)}", **result})
+            **result, "success": False, "error": f"Could not load ticket: {_cw_error(e)}"})
 
     author = request.member_identifier or ticket.get("owner_identifier")
+
+    # A time entry with no member is rejected by ConnectWise — fail with a clear
+    # message rather than a cryptic 400.
+    if has_time and not author:
+        return JSONResponse(status_code=400, content={
+            **result, "success": False,
+            "error": "Select a technician before logging time."})
 
     # 1. The critical write: internal note, into the time entry (also posted to
     #    Internal Analysis) when time is logged, otherwise a standalone note.
@@ -642,9 +649,10 @@ async def finalize_resolve(request: FinalizeResolveRequest):
         step = "time entry" if has_time else "internal note"
         print(f"[finalize] ticket {request.ticket_id} {step} failed: {e!r}")
         return JSONResponse(status_code=500, content={
+            **result,
             "success": False,
             "error": f"Could not save the {step}: {_cw_error(e)}. Nothing was changed — adjust and try again.",
-            **result})
+        })
 
     # 2. Customer email (best effort — never blocks the resolve).
     if request.send_email and request.email_text.strip():
