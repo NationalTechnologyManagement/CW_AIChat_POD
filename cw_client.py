@@ -170,12 +170,14 @@ async def create_ticket_note(
     ticket_id: int,
     text: str,
     member_identifier: str | None = None,
+    internal: bool = True,
     resolution: bool = False,
+    detail: bool = False,
 ) -> dict:
     payload = {
         "text": text,
-        "internalAnalysisFlag": not resolution,
-        "detailDescriptionFlag": False,
+        "internalAnalysisFlag": internal,
+        "detailDescriptionFlag": detail,
         "resolutionFlag": resolution,
     }
     if member_identifier:
@@ -227,6 +229,7 @@ async def create_time_entry(
     notes: str = "",
     member_identifier: str | None = None,
     add_to_internal: bool = False,
+    add_to_resolution: bool = False,
 ) -> dict:
     """Create a time entry from explicit start/end timestamps.
 
@@ -255,6 +258,7 @@ async def create_time_entry(
     if notes:
         payload["notes"] = notes
         payload["addToInternalAnalysisFlag"] = add_to_internal
+        payload["addToResolutionFlag"] = add_to_resolution
     if member_identifier:
         payload["member"] = {"identifier": member_identifier}
 

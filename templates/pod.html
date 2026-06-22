@@ -625,6 +625,45 @@
         .toast-success { background: var(--success); color: #fff; }
         .toast-error { background: var(--error); color: #fff; }
 
+        /* Result banner — persists across the resolve background job */
+        .result-banner {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1100;
+            padding: 9px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .result-banner.show { display: flex; }
+        .result-banner.info { background: var(--bg-header); color: #fff; }
+        .result-banner.success { background: var(--success); color: #fff; }
+        .result-banner.error { background: var(--error); color: #fff; }
+
+        .result-banner span { flex: 1; line-height: 1.4; }
+
+        .result-banner button {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: #fff;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .result-banner button:hover { background: rgba(255,255,255,0.35); }
+
         /* Confirmation Dialog */
         .dialog-overlay {
             display: none;
@@ -811,11 +850,9 @@
             <p class="resolve-status" id="resolveStatus">Generating customer email draft...</p>
             <div id="categorySection" style="display:none">
                 <p style="font-size:11px; color:var(--text-muted); margin-bottom:2px;">Ticket categorization (required to resolve):</p>
-                <div class="time-row">
-                    <label class="time-field"><span>Type</span><select class="time-input" id="resType"></select></label>
-                    <label class="time-field"><span>Subtype</span><select class="time-input" id="resSubtype"></select></label>
-                    <label class="time-field"><span>Item</span><select class="time-input" id="resItem"></select></label>
-                </div>
+                <label class="time-field"><span>Type</span><select class="time-input" id="resType"></select></label>
+                <label class="time-field"><span>Subtype</span><select class="time-input" id="resSubtype"></select></label>
+                <label class="time-field"><span>Item</span><select class="time-input" id="resItem"></select></label>
             </div>
             <div id="emailSection" style="display:none">
                 <p style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Customer Email Draft (editable):</p>
@@ -830,6 +867,12 @@
 
     <!-- Toast -->
     <div class="toast" id="toast"></div>
+
+    <!-- Result banner (resolve progress / success / error) -->
+    <div class="result-banner" id="resultBanner">
+        <span id="resultBannerText"></span>
+        <button id="resultBannerClose" title="Dismiss">&times;</button>
+    </div>
 
     <script>
         // --- Data from server ---
@@ -926,6 +969,9 @@
         const resType = document.getElementById('resType');
         const resSubtype = document.getElementById('resSubtype');
         const resItem = document.getElementById('resItem');
+        const resultBanner = document.getElementById('resultBanner');
+        const resultBannerText = document.getElementById('resultBannerText');
+        const resultBannerClose = document.getElementById('resultBannerClose');
         const attachBtn = document.getElementById('attachBtn');
         const fileInput = document.getElementById('fileInput');
         const attachmentStrip = document.getElementById('attachmentStrip');
@@ -1391,6 +1437,22 @@
             setTimeout(function() { toast.classList.remove('show'); }, 3000);
         }
 
+        // Persistent banner for the resolve background job. 'info' and 'error'
+        // stay until replaced/dismissed; 'success' auto-clears.
+        let bannerTimer = null;
+        function showBanner(message, type) {
+            clearTimeout(bannerTimer);
+            resultBannerText.textContent = message;
+            resultBanner.className = 'result-banner show ' + (type || 'info');
+            if (type === 'success') {
+                bannerTimer = setTimeout(hideBanner, 7000);
+            }
+        }
+        function hideBanner() {
+            resultBanner.className = 'result-banner';
+        }
+        resultBannerClose.addEventListener('click', hideBanner);
+
         // --- Time Modal ---
         // Populate the technician picker (active full-license members) and
         // preselect whoever the pod is acting as.
@@ -1693,55 +1755,54 @@
             resolveModalOverlay.classList.add('show');
         }
 
-        async function finalizeResolve(sendEmail) {
-            resolveSkipEmailBtn.disabled = true;
-            resolveSendEmailBtn.disabled = true;
-            resolveStatus.textContent = 'Finalizing — saving notes, time, and resolving the ticket...';
+        // Fire the resolve and return immediately — the tech doesn't wait on the
+        // button. The modal closes, a banner tracks progress, and success/error
+        // is reported when the background request completes.
+        function finalizeResolve(sendEmail) {
+            const payload = {
+                ticket_id: TICKET.id,
+                internal_note: resolveState.internalNote,
+                member_identifier: resolveState.member || selectedMember || null,
+                time_start: resolveState.timeStart,
+                time_end: resolveState.timeEnd,
+                send_email: sendEmail,
+                email_text: sendEmail ? emailPreview.value : '',
+                type_id: resType.value ? parseInt(resType.value, 10) : null,
+                subtype_id: resSubtype.value ? parseInt(resSubtype.value, 10) : null,
+                item_id: resItem.value ? parseInt(resItem.value, 10) : null,
+            };
 
-            try {
-                const response = await fetch('/finalize-resolve', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({
-                        ticket_id: TICKET.id,
-                        internal_note: resolveState.internalNote,
-                        member_identifier: resolveState.member || selectedMember || null,
-                        time_start: resolveState.timeStart,
-                        time_end: resolveState.timeEnd,
-                        send_email: sendEmail,
-                        email_text: sendEmail ? emailPreview.value : '',
-                        type_id: resType.value ? parseInt(resType.value, 10) : null,
-                        subtype_id: resSubtype.value ? parseInt(resSubtype.value, 10) : null,
-                        item_id: resItem.value ? parseInt(resItem.value, 10) : null,
-                    }),
-                });
-                const data = await response.json();
+            // Free the screen right away.
+            resolveModalOverlay.classList.remove('show');
+            resolveState = null;
+            resolveBtn.disabled = true;
+            resolveBtn.textContent = 'Resolving…';
+            showBanner('Resolving ticket #' + TICKET.id + ' — saving notes, time, and status…', 'info');
 
-                if (data.success) {
-                    resolveModalOverlay.classList.remove('show');
-                    showToast(data.message || 'Ticket resolved');
+            fetch('/finalize-resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                body: JSON.stringify(payload),
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data && data.success) {
+                    let msg = data.message || ('Ticket #' + TICKET.id + ' resolved');
                     if (data.warnings && data.warnings.length) {
-                        setTimeout(function() { showToast(data.warnings.join(' • '), 'error'); }, 1200);
+                        showBanner(msg + ' — note: ' + data.warnings.join(' • '), 'error');
+                    } else {
+                        showBanner(msg, 'success');
                     }
-                    resolveState = null;
-                    resolveBtn.disabled = true;
                     resolveBtn.textContent = 'Resolved';
                     saveBtn.disabled = true;
                 } else {
-                    const msg = data.error || 'Failed to finalize';
-                    resolveStatus.textContent = msg;
-                    resolveStatus.style.color = 'var(--error)';
-                    showToast(msg, 'error');
-                    resolveSkipEmailBtn.disabled = false;
-                    resolveSendEmailBtn.disabled = false;
+                    showBanner('Resolve failed for #' + TICKET.id + ': ' + ((data && data.error) || 'unknown error'), 'error');
+                    resolveBtn.disabled = false;
+                    resolveBtn.textContent = 'Resolve';
                 }
-            } catch (err) {
-                resolveStatus.textContent = 'Connection error — try again';
-                resolveStatus.style.color = 'var(--error)';
-                showToast('Connection error — try again', 'error');
-                resolveSkipEmailBtn.disabled = false;
-                resolveSendEmailBtn.disabled = false;
-            }
+            }).catch(function() {
+                showBanner('Resolve failed for #' + TICKET.id + ': connection error — please retry', 'error');
+                resolveBtn.disabled = false;
+                resolveBtn.textContent = 'Resolve';
+            });
         }
 
         resolveSkipEmailBtn.addEventListener('click', function() { finalizeResolve(false); });

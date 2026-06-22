@@ -697,6 +697,7 @@ async def finalize_resolve(request: FinalizeResolveRequest):
                 notes=request.internal_note,
                 member_identifier=author,
                 add_to_internal=True,
+                add_to_resolution=True,
             )
             result["time_logged"] = True
             result["internal_note_saved"] = True
@@ -706,9 +707,11 @@ async def finalize_resolve(request: FinalizeResolveRequest):
                 ticket_id=request.ticket_id,
                 text=request.internal_note,
                 member_identifier=author,
+                internal=True,
+                resolution=True,
             )
             result["internal_note_saved"] = True
-            print(f"[finalize] ticket {request.ticket_id}: internal note as {author}")
+            print(f"[finalize] ticket {request.ticket_id}: internal+resolution note as {author}")
     except Exception as e:
         step = "time entry" if has_time else "internal note"
         print(f"[finalize] ticket {request.ticket_id} {step} failed: {e!r}")
