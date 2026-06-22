@@ -246,8 +246,11 @@ async def create_time_entry(
         "chargeToType": "ServiceTicket",
         "chargeToId": ticket_id,
         "actualHours": actual_hours,
-        "timeStart": time_start,
-        "timeEnd": time_end,
+        # ConnectWise rejects fractional seconds ("UnsupportedFormat"); the
+        # browser's toISOString() includes milliseconds, so normalize to
+        # whole-second UTC (yyyy-MM-ddTHH:mm:ssZ) here.
+        "timeStart": _cw_datetime(start_dt),
+        "timeEnd": _cw_datetime(end_dt),
     }
     if notes:
         payload["notes"] = notes
@@ -263,6 +266,14 @@ async def create_time_entry(
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO-8601 timestamp (accepting a trailing 'Z') to a datetime."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _cw_datetime(dt: datetime) -> str:
+    """Format a datetime the way ConnectWise accepts: whole-second UTC with a
+    trailing Z, no fractional seconds (which trigger 'UnsupportedFormat')."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 async def get_members() -> list[dict]:
