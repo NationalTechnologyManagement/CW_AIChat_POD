@@ -469,6 +469,9 @@
         }
 
         .live-bar.on .live-banner { display: flex; }
+        .live-as-wrap { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-weight: 600; }
+        .live-as { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.45); border-radius: 5px; font-size: 11px; font-weight: 600; padding: 2px 4px; cursor: pointer; }
+        .live-as option { color: #1f2933; }
 
         .input-area.live-on textarea {
             border-color: var(--live);
@@ -930,7 +933,12 @@
             <button type="button" id="liveToggleAi" class="active ai">Ask Hercules (AI)</button>
             <button type="button" id="liveToggleLive" class="live">Live: message {{ ticket.contact_name or 'customer' }}</button>
         </div>
-        <div class="live-banner">&#9679;&nbsp;LIVE &mdash; messages go straight to {{ ticket.contact_name or 'the customer' }}</div>
+        <div class="live-banner">
+            &#9679;&nbsp;LIVE &mdash; messages go straight to {{ ticket.contact_name or 'the customer' }}
+            <span class="live-as-wrap">&middot; messaging as
+                <select id="liveAsSelect" class="live-as" title="Who the customer sees you as"></select>
+            </span>
+        </div>
     </div>
 
     <div class="attachment-strip" id="attachmentStrip"></div>
@@ -1997,7 +2005,42 @@
         let liveWantOpen = false;
         const liveRenderedIds = new Set();
 
-        function liveAuthorName() { return memberName(selectedMember) || 'Technician'; }
+        // --- Live chat identity: WHO is messaging the customer ---
+        // Prefer the tech CW says is viewing (CURRENT_MEMBER); fall back to the
+        // ticket owner / picker. Overridable via the "Messaging as" picker so any
+        // tech on the ticket shows up under their own full name on both sides.
+        let liveIdentity = memberInList(CURRENT_MEMBER) ? CURRENT_MEMBER : (selectedMember || '');
+        function liveMember() { return liveIdentity || selectedMember || ''; }
+        function liveAuthorName() { return memberName(liveMember()) || 'Technician'; }
+
+        // "Messaging as" picker — lets whichever tech is on the ticket pick their
+        // own identity so they (and the customer) see their real full name.
+        (function initLiveAsPicker() {
+            const sel = document.getElementById('liveAsSelect');
+            if (!sel) return;
+            if (!MEMBERS || !MEMBERS.length) {
+                const wrap = document.querySelector('.live-as-wrap');
+                if (wrap) wrap.style.display = 'none';
+                return;
+            }
+            MEMBERS.forEach(function(m) {
+                const opt = document.createElement('option');
+                opt.value = m.identifier;
+                opt.textContent = m.name;
+                sel.appendChild(opt);
+            });
+            const cur = liveMember();
+            if (cur && MEMBERS.some(function(m) { return m.identifier === cur; })) {
+                sel.value = cur;
+            } else {
+                sel.selectedIndex = 0;
+                liveIdentity = sel.value;
+            }
+            sel.addEventListener('change', function() {
+                liveIdentity = sel.value;
+                setStoredMember(sel.value);
+            });
+        })();
 
         function addLiveSystem(textStr) {
             const welcome = chatArea.querySelector('.welcome-message');
@@ -2021,7 +2064,11 @@
             div.className = 'message ' + (isTech ? 'message-tech-out' : 'message-customer-in');
             const label = document.createElement('div');
             label.className = 'message-label';
-            label.textContent = isTech ? 'You → Customer' : (env.authorName || TICKET.contact_name || 'Customer');
+            // Distinguish your own messages from other techs on the same ticket.
+            const mine = isTech && env.memberIdentifier && env.memberIdentifier === liveMember();
+            label.textContent = isTech
+                ? ((mine ? 'You' : (env.authorName || 'Technician')) + ' → ' + (TICKET.contact_name || 'Customer'))
+                : (env.authorName || TICKET.contact_name || 'Customer');
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.style.whiteSpace = 'pre-wrap';
@@ -2053,7 +2100,7 @@
             const params = new URLSearchParams({
                 token: POD_TOKEN,
                 ticketId: TICKET.id,
-                member: selectedMember || '',
+                member: liveMember(),
                 author: liveAuthorName(),
             });
             liveWs = new WebSocket(proto + '://' + location.host + '/live/ws?' + params.toString());
@@ -2073,7 +2120,7 @@
                 headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
                 body: JSON.stringify({
                     ticket_id: TICKET.id,
-                    member_identifier: selectedMember || null,
+                    member_identifier: liveMember() || null,
                     author_name: liveAuthorName(),
                     model: modelSelect.value,
                 }),
@@ -2115,7 +2162,7 @@
             liveWs.send(JSON.stringify({
                 body: text,
                 authorName: liveAuthorName(),
-                memberIdentifier: selectedMember || null,
+                memberIdentifier: liveMember() || null,
             }));
             chatInput.value = '';
             chatInput.style.height = 'auto';
