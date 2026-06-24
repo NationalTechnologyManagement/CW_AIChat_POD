@@ -22,6 +22,8 @@
             --text-muted: #7a8691;
             --accent: #E8721C;
             --accent-hover: #cf6014;
+            --live: #2e9e5b;
+            --live-hover: #268a4f;
             --success: #2e7d32;
             --error: #c62828;
             --warning: #b26a00;
@@ -413,6 +415,94 @@
         .btn-attach:hover {
             border-color: var(--accent);
             color: var(--accent);
+        }
+
+        /* Live Messaging — mode toggle, banner, input + message styling.
+           Green (--live) is used ONLY for the live customer channel, so the tech
+           can never confuse "typing to the AI" (orange) with "typing to the
+           customer" (green). */
+        .live-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 16px 0;
+            background: var(--bg-primary);
+            flex-shrink: 0;
+        }
+
+        .live-toggle {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .live-toggle button {
+            flex: 1;
+            border: none;
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 6px 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .live-toggle button.active.ai { background: var(--accent); color: #fff; }
+        .live-toggle button.active.live { background: var(--live); color: #fff; }
+
+        .live-banner {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #fff;
+            background: var(--live);
+            border-radius: 6px;
+            padding: 6px 10px;
+        }
+
+        .live-bar.on .live-banner { display: flex; }
+
+        .input-area.live-on textarea {
+            border-color: var(--live);
+            box-shadow: 0 0 0 1px var(--live) inset;
+        }
+        .input-area.live-on textarea:focus { border-color: var(--live); }
+        .input-area.live-on .btn-send { background: var(--live); }
+        .input-area.live-on .btn-send:hover { background: var(--live-hover); }
+
+        .message-tech-out {
+            background: var(--live);
+            color: #fff;
+            align-self: flex-end;
+            border-bottom-right-radius: 5px;
+        }
+        .message-tech-out .message-label { color: rgba(255,255,255,0.9); }
+        .message-tech-out .message-content a { color: #fff; text-decoration: underline; }
+
+        .message-customer-in {
+            background: #eef4ff;
+            border: 1px solid #d4e2fb;
+            align-self: flex-start;
+            border-bottom-left-radius: 5px;
+        }
+
+        .live-system {
+            align-self: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            padding: 4px 12px;
+            margin: 2px 0;
         }
 
         /* Pending Attachments */
@@ -833,6 +923,14 @@
         <div class="welcome-message">
             Hi, I'm Hercules — ask me anything about this ticket. I have the full context loaded.
         </div>
+    </div>
+
+    <div class="live-bar" id="liveBar">
+        <div class="live-toggle">
+            <button type="button" id="liveToggleAi" class="active ai">Ask Hercules (AI)</button>
+            <button type="button" id="liveToggleLive" class="live">Live: message {{ ticket.contact_name or 'customer' }}</button>
+        </div>
+        <div class="live-banner">&#9679;&nbsp;LIVE &mdash; messages go straight to {{ ticket.contact_name or 'the customer' }}</div>
     </div>
 
     <div class="attachment-strip" id="attachmentStrip"></div>
@@ -1343,6 +1441,7 @@
         // --- Send Message ---
         async function sendMessage() {
             const text = chatInput.value.trim();
+            if (liveMode) { sendLiveMessage(text); return; }
             if ((!text && pendingAttachments.length === 0) || isStreaming) return;
 
             // Build message content: plain string normally, OpenAI-style
@@ -1886,6 +1985,143 @@
             chatArea.innerHTML = '<div class="welcome-message">Hi, I\'m Hercules — ask me anything about this ticket. I have the full context loaded.</div>';
         }
 
+        // --- Live Messaging (technician <-> customer) ---
+        const inputArea = document.querySelector('.input-area');
+        const liveBar = document.getElementById('liveBar');
+        const liveToggleAi = document.getElementById('liveToggleAi');
+        const liveToggleLive = document.getElementById('liveToggleLive');
+        const LIVE_ACTIVE = {{ live_active | tojson }};
+
+        let liveMode = false;
+        let liveWs = null;
+        let liveWantOpen = false;
+        const liveRenderedIds = new Set();
+
+        function liveAuthorName() { return memberName(selectedMember) || 'Technician'; }
+
+        function addLiveSystem(textStr) {
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+            const div = document.createElement('div');
+            div.className = 'live-system';
+            div.textContent = textStr;
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function addLiveMessage(env) {
+            if (env.id) {
+                if (liveRenderedIds.has(env.id)) return;  // dedupe echoes/backlog
+                liveRenderedIds.add(env.id);
+            }
+            const welcome = chatArea.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+            const isTech = env.sender === 'technician';
+            const div = document.createElement('div');
+            div.className = 'message ' + (isTech ? 'message-tech-out' : 'message-customer-in');
+            const label = document.createElement('div');
+            label.className = 'message-label';
+            label.textContent = isTech ? 'You → Customer' : (env.authorName || TICKET.contact_name || 'Customer');
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.style.whiteSpace = 'pre-wrap';
+            contentDiv.textContent = env.body || '';
+            div.appendChild(label);
+            div.appendChild(contentDiv);
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+            if (!isTech && document.hidden) {
+                try { showToast('New message from ' + (env.authorName || 'customer')); } catch (e) {}
+            }
+        }
+
+        function handleLiveFrame(frame) {
+            if (!frame) return;
+            if (frame.kind === 'history') { (frame.messages || []).forEach(addLiveMessage); return; }
+            if (frame.kind === 'message') { addLiveMessage(frame); return; }
+            if (frame.kind === 'live_start') { addLiveSystem('🟢 Live chat started.'); return; }
+            if (frame.kind === 'live_end') {
+                addLiveSystem('Live chat ended.');
+                if (liveMode) setLiveMode(false, true);
+            }
+        }
+
+        function openLiveWs() {
+            liveWantOpen = true;
+            if (liveWs && (liveWs.readyState === WebSocket.OPEN || liveWs.readyState === WebSocket.CONNECTING)) return;
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const params = new URLSearchParams({
+                token: POD_TOKEN,
+                ticketId: TICKET.id,
+                member: selectedMember || '',
+                author: liveAuthorName(),
+            });
+            liveWs = new WebSocket(proto + '://' + location.host + '/live/ws?' + params.toString());
+            liveWs.onmessage = function(ev) { try { handleLiveFrame(JSON.parse(ev.data)); } catch (e) {} };
+            liveWs.onclose = function() { liveWs = null; if (liveWantOpen) setTimeout(openLiveWs, 2000); };
+            liveWs.onerror = function() { try { liveWs.close(); } catch (e) {} };
+        }
+
+        function closeLiveWs() {
+            liveWantOpen = false;
+            if (liveWs) { try { liveWs.close(); } catch (e) {} liveWs = null; }
+        }
+
+        function postLive(path) {
+            return fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                body: JSON.stringify({
+                    ticket_id: TICKET.id,
+                    member_identifier: selectedMember || null,
+                    author_name: liveAuthorName(),
+                    model: modelSelect.value,
+                }),
+            }).then(function(r) { return r.json().catch(function() { return {}; }); }).catch(function() { return {}; });
+        }
+
+        function setLiveMode(on, skipServer) {
+            liveMode = !!on;
+            inputArea.classList.toggle('live-on', liveMode);
+            liveBar.classList.toggle('on', liveMode);
+            liveToggleAi.classList.toggle('active', !liveMode);
+            liveToggleLive.classList.toggle('active', liveMode);
+            if (liveMode) {
+                chatInput.placeholder = 'Message goes live to ' + (TICKET.contact_name || 'the customer') + ' — type your reply…';
+                sendBtn.textContent = 'Send to Customer';
+                openLiveWs();
+                if (!skipServer) postLive('/live/start');
+            } else {
+                chatInput.placeholder = 'Type a message or paste a screenshot...';
+                sendBtn.textContent = 'Send';
+                closeLiveWs();
+                if (!skipServer) {
+                    postLive('/live/end').then(function(res) {
+                        if (res && res.note_saved) showToast('Live chat summary saved to ticket');
+                    });
+                }
+            }
+        }
+
+        function sendLiveMessage(text) {
+            if (!text) return;
+            if (!liveWs || liveWs.readyState !== WebSocket.OPEN) {
+                showToast('Reconnecting live chat — try again in a moment', 'error');
+                openLiveWs();
+                return;
+            }
+            // The message echoes back via the bus (deduped by id), so we don't
+            // render it optimistically here.
+            liveWs.send(JSON.stringify({
+                body: text,
+                authorName: liveAuthorName(),
+                memberIdentifier: selectedMember || null,
+            }));
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+            chatInput.focus();
+        }
+
         // --- Event Listeners ---
         sendBtn.addEventListener('click', sendMessage);
 
@@ -1905,6 +2141,12 @@
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         clearBtn.addEventListener('click', clearChat);
+
+        liveToggleAi.addEventListener('click', function() { if (liveMode) setLiveMode(false); });
+        liveToggleLive.addEventListener('click', function() { if (!liveMode) setLiveMode(true); });
+
+        // Resume a live session that was already active when the pod (re)loaded.
+        if (LIVE_ACTIVE) setLiveMode(true, true);
     </script>
     {% endif %}
 </body>

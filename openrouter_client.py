@@ -220,6 +220,41 @@ async def summarize_chat(messages: list[dict], model: str) -> str:
         return data["choices"][0]["message"]["content"]
 
 
+async def summarize_live_chat(messages: list[dict], model: str) -> str:
+    """Summarize a live technician<->customer chat into one internal ticket note.
+
+    `messages` are live_messages rows ({sender, authorName, body, ...}); unlike
+    summarize_chat this is a HUMAN conversation, so the note is labeled as a live
+    chat transcript, not AI analysis.
+    """
+    transcript = "\n".join(
+        f"{(m.get('authorName') or m.get('sender') or 'Unknown')} "
+        f"({'Technician' if m.get('sender') == 'technician' else 'Customer'}): "
+        f"{m.get('body', '')}"
+        for m in messages
+        if m.get("sender") in ("technician", "customer")
+    )
+
+    system_prompt = (
+        "You are a technical note writer for an MSP ticketing system. "
+        "Summarize this LIVE chat between a technician and a customer into a "
+        "structured internal ticket note. Use EXACTLY this format:\n\n"
+        "[Live Chat Summary - CW Chat Pod]\n\n"
+        "ISSUE:\n- What the customer reported\n\n"
+        "DISCUSSION:\n- Key points covered during the live chat\n\n"
+        "OUTCOME / NEXT STEPS:\n- What was resolved or what happens next\n\n"
+        "STATUS: [In Progress / Waiting on Client / Escalation Needed / Resolved]\n\n"
+        "Rules: Write in past tense. Be concise — bullet points, not paragraphs. "
+        "No conversational filler. Only include sections that have content."
+    )
+
+    return await _call_openrouter(
+        system_prompt,
+        f"Summarize this live support chat into an internal ticket note:\n\n{transcript}",
+        model,
+    )
+
+
 async def _call_openrouter(system_prompt: str, user_content: str, model: str, max_tokens: int = 1024, temperature: float = 0.3) -> str:
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(

@@ -1,0 +1,67 @@
+# Local end-to-end harness for live messaging.
+# Brings up Redis (the shared bus), Postgres (the pod's durable store), the
+# FastAPI pod, and the Hercules Node server (built from the sibling repo).
+#
+# Secrets (CW_*, OPENROUTER_*, POD_SECRET) are loaded from each service's .env
+# via env_file. Container-network values (DATABASE_URL, REDIS_URL, PORT, the
+# bridge URL/secret) are set under `environment` so they override .env.
+#
+#   docker compose up --build
+#   docker compose up --scale pod=2 --scale hercules=2   # Redis fan-out check
+#
+# LIVE_BRIDGE_SECRET is interpolated from this dir's .env (or a dev default) for
+# BOTH services so the pod and Hercules always share the same bridge secret.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pod
+      POSTGRES_PASSWORD: pod
+      POSTGRES_DB: pod
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  pod:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgresql://pod:pod@postgres:5432/pod"
+      REDIS_URL: "redis://redis:6379"
+      POD_SECRET: "${POD_SECRET:-dev-pod-secret}"
+      LIVE_BRIDGE_SECRET: "${LIVE_BRIDGE_SECRET:-dev-bridge-secret}"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - postgres
+
+  hercules:
+    build:
+      context: ../ntm-it-support/server
+    env_file:
+      - path: ../ntm-it-support/.env
+        required: false
+    environment:
+      PORT: "3001"
+      REDIS_URL: "redis://redis:6379"
+      POD_BASE_URL: "http://pod:8080"
+      LIVE_BRIDGE_SECRET: "${LIVE_BRIDGE_SECRET:-dev-bridge-secret}"
+    ports:
+      - "3001:3001"
+    depends_on:
+      - redis
+      - pod
+
+volumes:
+  pgdata:

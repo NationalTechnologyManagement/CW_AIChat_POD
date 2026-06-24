@@ -14,3 +14,7 @@ build/
 *.swp
 *.swo
 .DS_Store
+
+# Local-only: large CW data dump (dev fixture) and agent config — never deploy/commit
+All.json
+.claude/

@@ -2,8 +2,9 @@ import asyncio
 import hmac
 import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -21,6 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 
 import cw_client
 import db
+import live
 import openrouter_client
 from cw_client import CWAuthError, CWNotFoundError, CWAPIError
 
@@ -30,13 +32,20 @@ if not POD_SECRET:
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 RESOLVE_STATUS_NAME = os.getenv("RESOLVE_STATUS_NAME", "Resolved")
+# Shared secret for the server-to-server live-chat bridge (Hercules -> /live/history).
+LIVE_BRIDGE_SECRET = os.getenv("LIVE_BRIDGE_SECRET", "")
+# A live session left 'active' (tech closed the tab without ending) is treated as
+# stale after this long, so it doesn't silently re-open live mode on reload.
+LIVE_SESSION_TTL_SECONDS = int(os.getenv("LIVE_SESSION_TTL_SECONDS", "21600"))  # 6h
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cw_client.init_client()
     await db.init_pool()
+    await live.init_live()
     await openrouter_client.refresh_models()
     yield
+    await live.close_live()
     await db.close_pool()
     await cw_client.close_client()
 
@@ -59,7 +68,9 @@ templates = Jinja2Templates(directory="templates")
 
 @app.middleware("http")
 async def auth_and_headers(request: Request, call_next):
-    if request.url.path != "/health":
+    # /health is public; /live/history is a server-to-server bridge call that
+    # authenticates with LIVE_BRIDGE_SECRET inside the handler instead of POD_SECRET.
+    if request.url.path not in ("/health", "/live/history"):
         token = request.query_params.get("token") or request.headers.get("X-Pod-Token") or ""
         if not hmac.compare_digest(token.encode(), POD_SECRET.encode()):
             return JSONResponse(status_code=403, content={"error": "Unauthorized"})
@@ -351,6 +362,7 @@ async def pod(
             "board_options": EMPTY_OPTIONS,
             "current_member": member.strip(),
             "cw_manage_url": CW_MANAGE_URL,
+            "live_active": False,
             "error": None,
         }
         base.update(ctx)
@@ -374,6 +386,9 @@ async def pod(
         except Exception:
             pass
 
+        # Resume an in-progress live chat after a pod refresh — best effort.
+        live_active = await _live_active(ticketId)
+
         return render({
             "ticket": ticket,
             "notes": notes,
@@ -381,6 +396,7 @@ async def pod(
             "saved_messages": saved_messages,
             "members": members,
             "board_options": board_options,
+            "live_active": live_active,
         })
     except CWAuthError:
         return render({"error": "ConnectWise connection error — check API keys"})
@@ -824,3 +840,176 @@ class ClearMessagesRequest(BaseModel):
 async def clear_messages(request: ClearMessagesRequest):
     deleted = await db.clear_messages(request.ticket_id)
     return {"success": True, "deleted": deleted}
+
+
+# --- Live messaging (technician <-> customer) ---
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _live_active(ticket_id: int) -> bool:
+    """Whether a ticket has a live chat in progress — best effort. A session left
+    'active' past LIVE_SESSION_TTL_SECONDS (tech closed the tab without ending) is
+    treated as stale so it can't silently re-open live mode."""
+    try:
+        sess = await db.get_live_session(ticket_id)
+        if not sess or sess.get("status") != "active":
+            return False
+        started = sess.get("started_at")
+        if started:
+            try:
+                started_dt = datetime.fromisoformat(started)
+                age = (datetime.now(timezone.utc) - started_dt).total_seconds()
+                if age > LIVE_SESSION_TTL_SECONDS:
+                    return False
+            except (ValueError, TypeError):
+                pass
+        return True
+    except Exception:
+        return False
+
+
+class LiveStartRequest(BaseModel):
+    ticket_id: int
+    member_identifier: str | None = None
+    author_name: str | None = None
+
+
+class LiveEndRequest(BaseModel):
+    ticket_id: int
+    member_identifier: str | None = None
+    model: str = "anthropic/claude-haiku-4.5"
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowed(cls, v):
+        if not openrouter_client.is_model_allowed(v):
+            raise ValueError(f"Model '{v}' is not allowed")
+        return v
+
+
+@app.post("/live/start")
+async def live_start(request: LiveStartRequest):
+    """Technician opens a live chat. Marks the session active and tells the
+    customer's widget (via the bus) to surface the live channel."""
+    await db.start_live_session(request.ticket_id, request.member_identifier)
+    await live.publish(request.ticket_id, {
+        "id": str(uuid.uuid4()),
+        "ticketId": request.ticket_id,
+        "kind": "live_start",
+        "sender": "system",
+        "authorName": request.author_name or request.member_identifier or "a technician",
+        "memberIdentifier": request.member_identifier,
+        "body": "",
+        "ts": _now_iso(),
+    })
+    return {"success": True}
+
+
+@app.post("/live/end")
+async def live_end(request: LiveEndRequest):
+    """Technician ends the live chat. Reverts both UIs immediately, then writes a
+    single internal ConnectWise note summarizing the whole conversation."""
+    await db.end_live_session(request.ticket_id)
+    await live.publish(request.ticket_id, {
+        "id": str(uuid.uuid4()),
+        "ticketId": request.ticket_id,
+        "kind": "live_end",
+        "sender": "system",
+        "authorName": request.member_identifier or "a technician",
+        "memberIdentifier": request.member_identifier,
+        "body": "",
+        "ts": _now_iso(),
+    })
+
+    note_saved = False
+    try:
+        # Let any in-flight customer message (Hercules -> Redis -> our subscriber
+        # -> DB) settle so the summary captures the final line, then read.
+        await asyncio.sleep(0.75)
+        messages = await db.get_live_messages(request.ticket_id)
+        if messages:
+            ticket = await cw_client.get_ticket(request.ticket_id)
+            author = request.member_identifier or ticket.get("owner_identifier")
+            summary = await openrouter_client.summarize_live_chat(messages, request.model)
+            await cw_client.create_ticket_note(
+                ticket_id=request.ticket_id,
+                text=summary,
+                member_identifier=author,
+                internal=True,
+            )
+            note_saved = True
+            print(f"[live] summary note saved for ticket {request.ticket_id} as {author}")
+    except Exception as e:
+        print(f"[live] end-of-chat note failed for ticket {request.ticket_id}: {e}")
+
+    return {"success": True, "note_saved": note_saved}
+
+
+@app.get("/live/history")
+async def live_history(request: Request, ticketId: int = Query(...)):
+    """Backlog for the customer side, fetched server-to-server by Hercules.
+    Authenticated with LIVE_BRIDGE_SECRET (this path is exempt from POD_SECRET)."""
+    secret = request.headers.get("X-Bridge-Secret", "")
+    if not LIVE_BRIDGE_SECRET or not hmac.compare_digest(secret.encode(), LIVE_BRIDGE_SECRET.encode()):
+        return JSONResponse(status_code=403, content={"error": "Unauthorized"})
+    messages, live_active = await asyncio.gather(
+        db.get_live_messages(ticketId),
+        _live_active(ticketId),
+    )
+    return {"ticketId": ticketId, "messages": messages, "liveActive": live_active}
+
+
+@app.websocket("/live/ws")
+async def live_ws(websocket: WebSocket):
+    """The technician's live channel. Auth via POD_SECRET (?token=). Sends the
+    backlog on connect, then relays each typed message onto the bus."""
+    token = websocket.query_params.get("token", "")
+    if not hmac.compare_digest(token.encode(), POD_SECRET.encode()):
+        await websocket.close(code=1008)
+        return
+    try:
+        ticket_id = int(websocket.query_params.get("ticketId", ""))
+    except (TypeError, ValueError):
+        await websocket.close(code=1008)
+        return
+
+    member = websocket.query_params.get("member", "") or None
+    default_author = websocket.query_params.get("author", "") or (member or "Technician")
+
+    await websocket.accept()
+    live.register(ticket_id, websocket)
+
+    try:
+        history = await db.get_live_messages(ticket_id)
+        await websocket.send_json({"kind": "history", "ticketId": ticket_id, "messages": history})
+    except Exception as e:
+        print(f"[live-ws] backlog failed for ticket {ticket_id}: {e}")
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                continue
+            raw_body = data.get("body")
+            body = (raw_body if isinstance(raw_body, str) else "").strip()[:8000]
+            if not body:
+                continue
+            await live.publish(ticket_id, {
+                "id": str(uuid.uuid4()),
+                "ticketId": ticket_id,
+                "kind": "message",
+                "sender": "technician",
+                "authorName": data.get("authorName") or default_author,
+                "memberIdentifier": data.get("memberIdentifier") or member,
+                "body": body,
+                "ts": _now_iso(),
+            })
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[live-ws] error on ticket {ticket_id}: {e}")
+    finally:
+        live.unregister(ticket_id, websocket)
