@@ -48,9 +48,12 @@ CREATE TABLE IF NOT EXISTS live_messages (
     member_identifier TEXT,
     author_name       TEXT,
     body              TEXT NOT NULL,
+    attachments       TEXT,                   -- JSON array of {name,isImage,dataUrl}; NULL when none
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_live_messages_ticket ON live_messages (ticket_id, created_at, id);
+-- Backfill on instances whose live_messages table predates the attachments column.
+ALTER TABLE live_messages ADD COLUMN IF NOT EXISTS attachments TEXT;
 
 CREATE TABLE IF NOT EXISTS live_sessions (
     ticket_id   INTEGER PRIMARY KEY,
@@ -226,6 +229,7 @@ async def save_live_message(
     member_identifier: str | None = None,
     author_name: str | None = None,
     ts: str | None = None,
+    attachments=None,
 ) -> bool:
     """Persist one live message. Idempotent: a duplicate id (same message seen by
     another subscriber/replica) is silently ignored. Returns True if a row was
@@ -233,16 +237,20 @@ async def save_live_message(
 
     created_at is stored from the envelope's send-time `ts` so the transcript
     orders by when messages were sent, not when this replica happened to persist
-    them (which can differ under network jitter / multiple subscribers)."""
+    them (which can differ under network jitter / multiple subscribers).
+
+    `attachments` (a list of {name,isImage,dataUrl}) is stored as a JSON string,
+    same convention as chat_messages' structured content."""
     if not _conninfo:
         return False
 
     created_at = _parse_ts(ts) or datetime.now(timezone.utc)
+    attachments_json = json.dumps(attachments) if attachments else None
     query = (
-        "INSERT INTO live_messages (id, ticket_id, sender, member_identifier, author_name, body, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING"
+        "INSERT INTO live_messages (id, ticket_id, sender, member_identifier, author_name, body, attachments, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING"
     )
-    params = (msg_id, ticket_id, sender, member_identifier, author_name, body, created_at)
+    params = (msg_id, ticket_id, sender, member_identifier, author_name, body, attachments_json, created_at)
 
     if _use_sync:
         loop = asyncio.get_event_loop()
@@ -261,7 +269,7 @@ async def get_live_messages(ticket_id: int) -> list[dict]:
         return []
 
     query = (
-        "SELECT id, sender, member_identifier, author_name, body, created_at "
+        "SELECT id, sender, member_identifier, author_name, body, attachments, created_at "
         "FROM live_messages WHERE ticket_id = %s ORDER BY created_at ASC, id ASC"
     )
 
@@ -273,6 +281,15 @@ async def get_live_messages(ticket_id: int) -> list[dict]:
             cur = await conn.execute(query, (ticket_id,))
             rows = await cur.fetchall()
 
+    def _atts(raw):
+        if not raw:
+            return []
+        try:
+            v = json.loads(raw)
+            return v if isinstance(v, list) else []
+        except (ValueError, TypeError):
+            return []
+
     return [
         {
             "id": str(r[0]),
@@ -280,7 +297,8 @@ async def get_live_messages(ticket_id: int) -> list[dict]:
             "memberIdentifier": r[2],
             "authorName": r[3],
             "body": r[4],
-            "ts": r[5].isoformat() if r[5] else None,
+            "attachments": _atts(r[5]),
+            "ts": r[6].isoformat() if r[6] else None,
         }
         for r in rows
     ]

@@ -96,6 +96,7 @@ async def _handle_envelope(env: dict) -> None:
                 member_identifier=env.get("memberIdentifier"),
                 author_name=env.get("authorName"),
                 ts=env.get("ts"),
+                attachments=env.get("attachments"),
             )
         except Exception as e:
             print(f"[live] persist failed for ticket {ticket_id}: {e}")

@@ -2073,6 +2073,32 @@
             contentDiv.className = 'message-content';
             contentDiv.style.whiteSpace = 'pre-wrap';
             contentDiv.textContent = env.body || '';
+            // Render any attachments the customer sent from the widget: images inline
+            // (data URL), everything else as a named chip (the file is on the CW ticket).
+            if (Array.isArray(env.attachments) && env.attachments.length) {
+                env.attachments.forEach(function (att) {
+                    if (!att) return;
+                    if (att.isImage && typeof att.dataUrl === 'string' && att.dataUrl.indexOf('data:image/') === 0) {
+                        const img = document.createElement('img');
+                        img.className = 'message-image';
+                        img.src = att.dataUrl;
+                        img.alt = att.name || 'image';
+                        img.title = att.name || 'image';
+                        img.addEventListener('click', function () {
+                            img.classList.toggle('expanded');
+                            chatArea.scrollTop = chatArea.scrollHeight;
+                        });
+                        contentDiv.appendChild(img);
+                    } else {
+                        const chip = document.createElement('div');
+                        chip.textContent = '📎 ' + (att.name || 'attachment') + ' (on ticket)';
+                        chip.style.marginTop = '6px';
+                        chip.style.fontSize = '12px';
+                        chip.style.opacity = '0.85';
+                        contentDiv.appendChild(chip);
+                    }
+                });
+            }
             div.appendChild(label);
             div.appendChild(contentDiv);
             chatArea.appendChild(div);
