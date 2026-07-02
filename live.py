@@ -23,6 +23,23 @@ _sub_task: "asyncio.Task | None" = None
 # ticket_id (int) -> set of connected WebSockets on THIS process
 _clients: dict[int, set] = {}
 
+# Called (awaited) with the envelope the FIRST time a customer message is
+# persisted, so main.py can relay it to the CW ticket when no live session is
+# actually in progress (tech left / session ended) — the message must land on
+# the ticket instead of sitting invisible in live history.
+_customer_fallback = None
+
+
+def set_customer_fallback(fn) -> None:
+    global _customer_fallback
+    _customer_fallback = fn
+
+
+def has_clients(ticket_id: int) -> bool:
+    """Whether any WebSocket (i.e. a technician tab) is connected to this ticket
+    on THIS process."""
+    return bool(_clients.get(int(ticket_id)))
+
 
 def _channel(ticket_id: int) -> str:
     return f"live:ticket:{ticket_id}"
@@ -87,8 +104,9 @@ async def _handle_envelope(env: dict) -> None:
     """Persist (real messages only) then deliver to local WebSocket clients."""
     ticket_id = int(env.get("ticketId"))
     if env.get("kind") == "message":
+        inserted = False
         try:
-            await db.save_live_message(
+            inserted = await db.save_live_message(
                 msg_id=env["id"],
                 ticket_id=ticket_id,
                 sender=env.get("sender", "system"),
@@ -100,6 +118,13 @@ async def _handle_envelope(env: dict) -> None:
             )
         except Exception as e:
             print(f"[live] persist failed for ticket {ticket_id}: {e}")
+        # `inserted` gates the fallback to exactly one replica (the one that won
+        # the idempotent insert), so the CW note is never written twice.
+        if inserted and env.get("sender") == "customer" and _customer_fallback:
+            try:
+                await _customer_fallback(env)
+            except Exception as e:
+                print(f"[live] customer fallback failed for ticket {ticket_id}: {e}")
     await _fanout(ticket_id, env)
 
 

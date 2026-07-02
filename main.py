@@ -932,18 +932,19 @@ async def live_start(request: LiveStartRequest):
     return {"success": True}
 
 
-@app.post("/live/end")
-async def live_end(request: LiveEndRequest):
-    """Technician ends the live chat. Reverts both UIs immediately, then writes a
-    single internal ConnectWise note summarizing the whole conversation."""
-    await db.end_live_session(request.ticket_id)
-    await live.publish(request.ticket_id, {
+async def _finish_live_session(ticket_id: int, member_identifier: str | None, model: str) -> bool:
+    """End a live chat: mark the session ended, tell both UIs (the widget reverts
+    to ticket-note mode so the customer's next messages land on THIS ticket), and
+    write one internal ConnectWise note summarizing the conversation. Shared by
+    the explicit End-chat button and the tech-disconnect auto-end."""
+    await db.end_live_session(ticket_id)
+    await live.publish(ticket_id, {
         "id": str(uuid.uuid4()),
-        "ticketId": request.ticket_id,
+        "ticketId": ticket_id,
         "kind": "live_end",
         "sender": "system",
-        "authorName": request.member_identifier or "a technician",
-        "memberIdentifier": request.member_identifier,
+        "authorName": member_identifier or "a technician",
+        "memberIdentifier": member_identifier,
         "body": "",
         "ts": _now_iso(),
     })
@@ -953,23 +954,101 @@ async def live_end(request: LiveEndRequest):
         # Let any in-flight customer message (Hercules -> Redis -> our subscriber
         # -> DB) settle so the summary captures the final line, then read.
         await asyncio.sleep(0.75)
-        messages = await db.get_live_messages(request.ticket_id)
+        messages = await db.get_live_messages(ticket_id)
         if messages:
-            ticket = await cw_client.get_ticket(request.ticket_id)
-            author = request.member_identifier or ticket.get("owner_identifier")
-            summary = await openrouter_client.summarize_live_chat(messages, request.model)
+            ticket = await cw_client.get_ticket(ticket_id)
+            author = member_identifier or ticket.get("owner_identifier")
+            summary = await openrouter_client.summarize_live_chat(messages, model)
             await cw_client.create_ticket_note(
-                ticket_id=request.ticket_id,
+                ticket_id=ticket_id,
                 text=summary,
                 member_identifier=author,
                 internal=True,
             )
             note_saved = True
-            print(f"[live] summary note saved for ticket {request.ticket_id} as {author}")
+            print(f"[live] summary note saved for ticket {ticket_id} as {author}")
     except Exception as e:
-        print(f"[live] end-of-chat note failed for ticket {request.ticket_id}: {e}")
+        print(f"[live] end-of-chat note failed for ticket {ticket_id}: {e}")
+    return note_saved
 
+
+@app.post("/live/end")
+async def live_end(request: LiveEndRequest):
+    """Technician ends the live chat. Reverts both UIs immediately, then writes a
+    single internal ConnectWise note summarizing the whole conversation."""
+    note_saved = await _finish_live_session(request.ticket_id, request.member_identifier, request.model)
     return {"success": True, "note_saved": note_saved}
+
+
+# --- Auto-end on tech disconnect ---------------------------------------------
+# If the technician closes the pod tab WITHOUT clicking End chat, the session
+# stays 'active' (up to LIVE_SESSION_TTL_SECONDS) while the customer keeps
+# typing into a live channel nobody is watching — their messages pile up in
+# live history, never reach the CW ticket, and the frustrated customer starts a
+# new chat (which creates a duplicate ticket). After a grace period with no tech
+# reconnected, end the session properly so the widget flips back to ticket-note
+# mode and the conversation stays on the actual ticket.
+LIVE_DISCONNECT_GRACE_SECONDS = int(os.getenv("LIVE_DISCONNECT_GRACE_SECONDS", "90"))
+_auto_end_tasks: dict[int, asyncio.Task] = {}
+
+
+def _cancel_auto_end(ticket_id: int) -> None:
+    task = _auto_end_tasks.pop(ticket_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def _schedule_auto_end(ticket_id: int, member_identifier: str | None) -> None:
+    _cancel_auto_end(ticket_id)
+
+    async def _auto_end():
+        try:
+            await asyncio.sleep(LIVE_DISCONNECT_GRACE_SECONDS)
+            if live.has_clients(ticket_id):
+                return  # a tech reconnected during the grace period
+            if not await _live_active(ticket_id):
+                return  # already ended (e.g. via the End-chat button)
+            print(f"[live] no technician reconnected to ticket {ticket_id} "
+                  f"after {LIVE_DISCONNECT_GRACE_SECONDS}s — auto-ending live chat")
+            await _finish_live_session(ticket_id, member_identifier, "anthropic/claude-haiku-4.5")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[live] auto-end failed for ticket {ticket_id}: {e}")
+        finally:
+            _auto_end_tasks.pop(ticket_id, None)
+
+    _auto_end_tasks[ticket_id] = asyncio.create_task(_auto_end())
+
+
+# --- Fallback: customer message with no live session --------------------------
+# A customer message that arrives when NO live session is active (the race right
+# around live_end, or a widget that missed the live_end frame) would otherwise
+# sit invisible in live history. Relay it onto the CW ticket as a customer-
+# visible note so the conversation stays on the actual ticket. live.py invokes
+# this only for the replica that first persisted the message, so the note is
+# written exactly once.
+async def _relay_unwatched_customer_message(env: dict) -> None:
+    ticket_id = int(env.get("ticketId"))
+    if await _live_active(ticket_id):
+        return  # normal live traffic — a technician sees it in the live tab
+    body = (env.get("body") or "").strip()
+    names = [a.get("name") for a in (env.get("attachments") or [])
+             if isinstance(a, dict) and a.get("name")]
+    if names:
+        body += ("\n" if body else "") + "\n".join(f"[Attachment: {n}]" for n in names)
+    if not body:
+        return
+    author = env.get("authorName") or "Customer"
+    await cw_client.create_ticket_note(
+        ticket_id=ticket_id,
+        text=f"{author} (via Hercules, after live chat ended):\n{body}",
+        internal=False,
+    )
+    print(f"[live] relayed unwatched customer message on ticket {ticket_id} to a CW note")
+
+
+live.set_customer_fallback(_relay_unwatched_customer_message)
 
 
 @app.get("/live/history")
@@ -1005,6 +1084,7 @@ async def live_ws(websocket: WebSocket):
 
     await websocket.accept()
     live.register(ticket_id, websocket)
+    _cancel_auto_end(ticket_id)  # tech is (back) in the chat — call off any pending auto-end
 
     try:
         history = await db.get_live_messages(ticket_id)
@@ -1037,3 +1117,8 @@ async def live_ws(websocket: WebSocket):
         print(f"[live-ws] error on ticket {ticket_id}: {e}")
     finally:
         live.unregister(ticket_id, websocket)
+        # Last tech tab gone (closed without End chat)? Give them a grace period
+        # to reconnect, then end the session so the customer's messages go back
+        # to landing on the ticket instead of an unwatched live channel.
+        if not live.has_clients(ticket_id) and await _live_active(ticket_id):
+            _schedule_auto_end(ticket_id, member)
