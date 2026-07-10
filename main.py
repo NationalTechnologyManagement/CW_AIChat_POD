@@ -324,7 +324,7 @@ def build_system_prompt(ticket: dict, notes: list[dict], duplicates: list[dict] 
                 live_text += f"- [{who}] {author} ({ts}): {body}\n"
             live_text += "[END UNTRUSTED LIVE CHAT]\n"
 
-    return f"""You are Hercules, an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues. If a tech asks who you are, you are Hercules, NTM's support assistant.
+    return f"""You are Hercules, an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues. If a tech asks who you are, you are Hercules, NTM's support assistant. The tech you are talking to is an NTM employee — one of us; NTM is "we"/"our team," not an outside company they can call. So NEVER tell the tech to contact, call, email, open a ticket with, or "reach out to" NTM, NTM support, the help desk, or "your MSP" — to an NTM tech that is nonsense. When something must go further, it is escalated INTERNALLY within NTM (a senior/Tier-2 tech, a team lead, or the right NTM team), never handed off "to NTM." The person who opened the ticket (the customer/end-user) and outside vendors — Microsoft, the hardware OEM, the ISP, the software publisher, and the like — are separate parties the tech can and should contact when the fix calls for it.
 
 YOUR ROLE: Help the tech troubleshoot and resolve the issue. You are their thinking partner — analyze the ticket, review what's been tried, and recommend next steps. Everything you say should be grounded in the tech's question and the ticket data below.
 
@@ -343,13 +343,17 @@ GUIDELINES:
 - Always base your response on what the tech is asking AND the ticket context above
 - If a LIVE CHAT WITH THE CUSTOMER is present above, the tech is messaging the customer in real time right now — use that exchange to understand the current back-and-forth and help the tech craft their next reply or troubleshooting step
 - When asked "what should we do" or "next steps" — review the ticket summary, all notes, and any similar tickets, then formulate a clear troubleshooting plan based on what's already been tried
-- If similar tickets exist above, check if any had a resolution that applies to this issue. Reference it: "Ticket #XXXX had a similar issue and was resolved by..."
+- If similar tickets exist above, check if any had a resolution that applies to this issue. Reference it: "Ticket #XXXX had a similar issue and was resolved by..." — but restate that resolution in internal terms; if a note's own wording says something like "escalated to NTM" or "had the client contact NTM," treat it as an internal handoff and don't parrot it back as if the tech should contact NTM
 - NEVER suggest closing or resolving the ticket — only recommend troubleshooting steps and solutions
 - NEVER say you don't have access to ticket data — you have the full summary, notes, and similar ticket history above
 - Techs may paste screenshots or attach images (error dialogs, console output, device photos) — read them carefully and reference the specific details you see in them
 - Give specific, actionable steps — commands, admin console paths, PowerShell cmdlets
 - Keep responses concise and focused — techs are working, not reading essays
-- If the issue needs escalation or on-site work, say so clearly"""
+- Remember the tech IS NTM — so anything that is actually NTM is US, not an outside party: our help desk/service desk, the NOC or SOC, Tier-2, the on-call engineer, procurement/licensing, our internal IT, and the admin/tenant-admin role NTM holds on managed customer systems. Never tell the tech to contact, call, or open a ticket with any of these as though it were external — e.g., on a password/M365/AD ticket, don't say "have the user contact their IT admin" when that admin is us — because routing work to another NTM person or team is an INTERNAL escalation
+- When something is beyond the current tech, escalate INTERNALLY and say so plainly — loop in a senior or Tier-2 NTM tech, a team lead or manager, or the right NTM team (networking, security, etc.), framed as an internal handoff. If you don't know NTM's exact escalation path, keep it generic ("escalate to a senior/Tier-2 tech or team lead") — never invent an NTM support line, phone number, email, or ticket queue to send them to
+- Reaching OUTSIDE NTM is correct when the fix needs it — name the party: open a case with a vendor or manufacturer (Microsoft, the hardware OEM, the ISP/carrier, the line-of-business software publisher, and the like — illustrative, not exhaustive), or ask the customer/end-user to perform, confirm, provide, or authorize something. These are fine; just don't route them through NTM
+- When you are drafting a message the tech will SEND to the customer/end-user (for example, a live-chat reply or an email), it is correct and expected to direct the customer to NTM — "contact NTM support," "open a ticket with our help desk," or email support@trustntm.com. The rule against contacting NTM governs instructions aimed at the tech themselves, never what the customer is told to do
+- If the issue needs on-site work, say so clearly — that means NTM's own staff going on-site (the tech, a colleague, or a dispatched field/Tier-2 tech), not calling in an outside party"""
 
 
 # --- Routes ---
@@ -735,13 +739,18 @@ async def _resolve_status_id(board_id: int) -> int | None:
 
 @app.post("/finalize-resolve")
 async def finalize_resolve(request: FinalizeResolveRequest):
-    """Commit a resolution: internal note (into the time entry and/or Internal
-    Analysis), optional customer email, and move the ticket to Resolved — all
-    attributed to the tech. Notes and time are written before the status flips,
-    so a resolved ticket always has its documentation in place."""
+    """Commit a resolution, all attributed to the tech:
+      - the internal note (technician analysis) -> Internal Analysis ONLY,
+      - the customer email -> the ticket Resolution (the customer-facing summary),
+        emailed to the contact when requested,
+      - optional Type/Subtype/Item, then move the ticket to Resolved.
+    Notes are written before the status flips, so a resolved ticket always has its
+    documentation in place. The internal note is NEVER the Resolution and is never
+    sent to the customer."""
     has_time = bool(request.time_start and request.time_end)
     result = {"success": True, "time_logged": False, "internal_note_saved": False,
-              "email_sent": False, "category_set": False, "status_set": False, "warnings": []}
+              "resolution_saved": False, "email_sent": False, "category_set": False,
+              "status_set": False, "warnings": []}
 
     # Fetch the ticket up front; without it we can't attribute or resolve.
     try:
@@ -760,9 +769,11 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             **result, "success": False,
             "error": "Select a technician before logging time."})
 
-    # 1. The critical write: internal note, into the time entry (also posted to
-    #    Internal Analysis) when time is logged, otherwise a standalone note.
-    #    If this fails we abort cleanly — nothing saved — so a retry won't double up.
+    # 1. The critical write: the internal note (technician analysis), into the time
+    #    entry (and Internal Analysis) when time is logged, otherwise a standalone
+    #    Internal Analysis note. This is INTERNAL ONLY — never the Resolution and
+    #    never customer-visible. If it fails we abort cleanly — nothing saved — so a
+    #    retry won't double up.
     try:
         if has_time:
             entry = await cw_client.create_time_entry(
@@ -772,21 +783,21 @@ async def finalize_resolve(request: FinalizeResolveRequest):
                 notes=request.internal_note,
                 member_identifier=author,
                 add_to_internal=True,
-                add_to_resolution=True,
+                add_to_resolution=False,
             )
             result["time_logged"] = True
             result["internal_note_saved"] = True
-            print(f"[finalize] ticket {request.ticket_id}: time entry {entry.get('id')} as {author}")
+            print(f"[finalize] ticket {request.ticket_id}: time entry {entry.get('id')} (internal) as {author}")
         else:
             await cw_client.create_ticket_note(
                 ticket_id=request.ticket_id,
                 text=request.internal_note,
                 member_identifier=author,
                 internal=True,
-                resolution=True,
+                resolution=False,
             )
             result["internal_note_saved"] = True
-            print(f"[finalize] ticket {request.ticket_id}: internal+resolution note as {author}")
+            print(f"[finalize] ticket {request.ticket_id}: internal-analysis note as {author}")
     except Exception as e:
         step = "time entry" if has_time else "internal note"
         print(f"[finalize] ticket {request.ticket_id} {step} failed: {e!r}")
@@ -796,18 +807,35 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             "error": f"Could not save the {step}: {_cw_error(e)}. Nothing was changed — adjust and try again.",
         })
 
-    # 2. Customer email (best effort — never blocks the resolve).
-    if request.send_email and request.email_text.strip():
+    # 2. The Resolution — the customer-facing summary of how the issue was fixed.
+    #    This (NOT the internal note) is recorded as the ticket's Resolution, and it
+    #    is emailed to the contact when the tech chose to send it. Best effort — a
+    #    failure here never blocks the resolve.
+    resolution_text = (request.email_text or "").strip()
+    if resolution_text:
         try:
-            await cw_client.send_email_to_contact(
-                ticket_id=request.ticket_id,
-                text=request.email_text,
-                member_identifier=author,
-            )
-            result["email_sent"] = True
+            if request.send_email:
+                await cw_client.send_email_to_contact(
+                    ticket_id=request.ticket_id,
+                    text=resolution_text,
+                    member_identifier=author,
+                    resolution=True,
+                )
+                result["email_sent"] = True
+            else:
+                # Not emailing, but still record it as the Resolution (unsent).
+                await cw_client.create_ticket_note(
+                    ticket_id=request.ticket_id,
+                    text=resolution_text,
+                    member_identifier=author,
+                    internal=False,
+                    resolution=True,
+                )
+            result["resolution_saved"] = True
+            print(f"[finalize] ticket {request.ticket_id}: resolution saved (emailed={result['email_sent']}) as {author}")
         except Exception as e:
-            print(f"[finalize] ticket {request.ticket_id} email failed: {e!r}")
-            result["warnings"].append(f"Email not sent: {_cw_error(e)}")
+            print(f"[finalize] ticket {request.ticket_id} resolution/email failed: {e!r}")
+            result["warnings"].append(f"Resolution not saved: {_cw_error(e)}")
 
     # 3. Type/Subtype/Item — ConnectWise requires a valid categorization before
     #    a ticket can be resolved. Set it (if provided) ahead of the status change.
@@ -842,8 +870,8 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     if result["time_logged"]:
         parts.append("time logged")
     parts.append("internal note saved")
-    if result["email_sent"]:
-        parts.append("email sent")
+    if result["resolution_saved"]:
+        parts.append("resolution emailed" if result["email_sent"] else "resolution saved")
     parts.append("ticket resolved" if result["status_set"] else "status NOT changed")
     result["message"] = "Done — " + ", ".join(parts)
     return result
