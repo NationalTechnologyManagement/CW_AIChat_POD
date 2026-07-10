@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -24,6 +24,7 @@ import cw_client
 import db
 import live
 import openrouter_client
+import screenconnect_client
 from cw_client import CWAuthError, CWNotFoundError, CWAPIError
 
 POD_SECRET = os.getenv("POD_SECRET", "")
@@ -41,10 +42,12 @@ LIVE_SESSION_TTL_SECONDS = int(os.getenv("LIVE_SESSION_TTL_SECONDS", "21600"))  
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cw_client.init_client()
+    screenconnect_client.init_client()
     await db.init_pool()
     await live.init_live()
     await openrouter_client.refresh_models()
     yield
+    await screenconnect_client.close_client()
     await live.close_live()
     await db.close_pool()
     await cw_client.close_client()
@@ -377,6 +380,7 @@ async def pod(
             "board_options": EMPTY_OPTIONS,
             "current_member": member.strip(),
             "cw_manage_url": CW_MANAGE_URL,
+            "screenconnect_enabled": screenconnect_client.is_configured(),
             "live_active": False,
             "error": None,
         }
@@ -419,6 +423,37 @@ async def pod(
         return render({"error": f"Ticket #{ticketId} not found"})
     except Exception as e:
         return render({"error": f"Error loading ticket: {str(e)[:100]}"})
+
+
+@app.get("/screenconnect/sessions")
+async def screenconnect_sessions(ticketId: int = Query(...)):
+    """Resolve ticket configurations to ScreenConnect Access launch links."""
+    if not screenconnect_client.is_configured():
+        raise HTTPException(status_code=503, detail="ScreenConnect is not configured")
+
+    try:
+        configurations = await cw_client.get_ticket_configurations(ticketId)
+        if not configurations:
+            raise HTTPException(
+                status_code=404,
+                detail="No computer configuration is attached to this ticket",
+            )
+
+        sessions = await screenconnect_client.resolve_computers(
+            [item["name"] for item in configurations]
+        )
+        if not sessions:
+            raise HTTPException(
+                status_code=404,
+                detail="No matching ScreenConnect Access session was found",
+            )
+        return {"sessions": sessions}
+    except HTTPException:
+        raise
+    except (CWAuthError, CWNotFoundError, CWAPIError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except screenconnect_client.ScreenConnectError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 async def _safe_get_members() -> list[dict]:
@@ -1097,6 +1132,26 @@ async def live_ws(websocket: WebSocket):
             data = await websocket.receive_json()
             if not isinstance(data, dict):
                 continue
+
+            # Ephemeral presence signal: the technician is typing to the customer.
+            # Published to the bus (so the customer widget can show "typing…") but
+            # never persisted — live.py only saves kind == "message". The mirror
+            # direction (customer -> tech) arrives via the bus and is fanned out
+            # by the subscriber, so the tech UI sees the customer typing too.
+            if data.get("kind") == "typing":
+                state = data.get("state")
+                await live.publish(ticket_id, {
+                    "id": str(uuid.uuid4()),
+                    "ticketId": ticket_id,
+                    "kind": "typing",
+                    "sender": "technician",
+                    "authorName": data.get("authorName") or default_author,
+                    "memberIdentifier": data.get("memberIdentifier") or member,
+                    "state": state if state in ("start", "stop") else "start",
+                    "ts": _now_iso(),
+                })
+                continue
+
             raw_body = data.get("body")
             body = (raw_body if isinstance(raw_body, str) else "").strip()[:8000]
             if not body:
