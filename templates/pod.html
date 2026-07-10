@@ -4,1038 +4,548 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hercules — NTM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,500,1,0&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        /* NTM brand palette: orange accent (#E8721C) on a clean light workspace. */
-        :root {
-            --bg-primary: #ffffff;
-            --bg-secondary: #f4f6f8;
-            --bg-input: #ffffff;
-            --bg-message-user: #E8721C;
-            --bg-message-ai: #f4f6f8;
-            --bg-header: #E8721C;
-            --header-text: #ffffff;
-            --bg-context: #f4f6f8;
-            --text-primary: #212529;
-            --text-secondary: #4a5560;
-            --text-muted: #7a8691;
-            --accent: #E8721C;
-            --accent-hover: #cf6014;
-            --live: #2e9e5b;
-            --live-hover: #268a4f;
-            --success: #2e7d32;
-            --error: #c62828;
-            --warning: #b26a00;
-            --border: #d7dde3;
-            --border-light: #e8ecef;
-            --scrollbar-track: #f4f6f8;
-            --scrollbar-thumb: #c2cad1;
-            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-            --shadow-md: 0 2px 8px rgba(0,0,0,0.12);
-            --radius: 4px;
-        }
-
-        body {
-            font-family: 'Segoe UI', 'Segoe UI Variable Text', -apple-system, Tahoma, Arial, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            height: 600px;
-            max-height: 600px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            font-size: 13px;
-            line-height: 1.5;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        /* Header */
-        .header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 8px 16px;
-            background: var(--bg-header);
-            border-bottom: 1px solid var(--border);
-            min-height: 42px;
-            flex-shrink: 0;
-        }
-
-        .header-brand {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            min-width: 0;
-        }
-
-        .header-logo {
-            height: 30px;
-            width: 30px;
-            padding: 3px;
-            background: #fff;
-            border-radius: 7px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.18);
-            object-fit: contain;
-            flex-shrink: 0;
-        }
-
-        .header-title {
-            font-weight: 700;
-            font-size: 15px;
-            color: var(--header-text);
-            letter-spacing: 0.01em;
-        }
-
-        .header-subtitle {
-            font-size: 10px;
-            font-weight: 500;
-            color: rgba(255,255,255,0.8);
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-top: -2px;
-        }
-
-        .header-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .model-select {
-            background: rgba(255,255,255,0.12);
-            color: var(--header-text);
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: var(--radius);
-            padding: 4px 8px;
-            font-size: 12px;
-            font-family: inherit;
-            cursor: pointer;
-            outline: none;
-            transition: border-color 0.15s;
-        }
-
-        .model-select option { color: var(--text-primary); background: var(--bg-primary); }
-
-        .model-select:focus { border-color: rgba(255,255,255,0.7); }
-
-        /* Context Bar */
-        .context-bar {
-            padding: 8px 16px;
-            background: var(--bg-context);
-            border-bottom: 1px solid var(--border);
-            cursor: pointer;
-            flex-shrink: 0;
-            user-select: none;
-            transition: background 0.15s;
-        }
-
-        .context-bar:hover { background: #f0f1f3; }
-
-        .context-summary {
-            font-size: 12px;
-            color: var(--text-secondary);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .context-summary strong {
-            color: var(--text-primary);
-            font-weight: 600;
-        }
-
-        .context-details {
-            display: none;
-            margin-top: 8px;
-            font-size: 12px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-        }
-
-        .context-details.expanded { display: block; }
-
-        .context-details div { padding: 1px 0; }
-
-        /* Error Banner */
-        .error-banner {
-            padding: 12px 16px;
-            background: #fef2f2;
-            border-bottom: 1px solid #fecaca;
-            color: var(--error);
-            text-align: center;
-            font-size: 13px;
-            font-weight: 500;
-            flex-shrink: 0;
-        }
-
-        /* Chat Area */
-        .chat-area {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .chat-area::-webkit-scrollbar { width: 5px; }
-        .chat-area::-webkit-scrollbar-track { background: transparent; }
-        .chat-area::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
-        .chat-area::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
-
-        .message {
-            padding: 9px 14px;
-            border-radius: 16px;
-            max-width: 82%;
-            min-width: 0;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .message-user {
-            background: var(--bg-message-user);
-            color: #fff;
-            align-self: flex-end;
-            border-bottom-right-radius: 5px;
-        }
-
-        .message-assistant {
-            background: var(--bg-message-ai);
-            align-self: flex-start;
-            border: 1px solid var(--border-light);
-            border-bottom-left-radius: 5px;
-        }
-
-        .message-label {
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--text-muted);
-            margin-bottom: 3px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .message-user .message-label { color: rgba(255,255,255,0.85); }
-
-        .message-content {
-            font-size: 13px;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-        }
-
-        .message-user .message-content a { color: #fff; text-decoration: underline; }
-        .message-user .message-content code {
-            background: rgba(255,255,255,0.22);
-            border-color: rgba(255,255,255,0.3);
-            color: #fff;
-        }
-
-        .message-content p { margin-bottom: 2px; }
-        .message-content p:last-child { margin-bottom: 0; }
-
-        .message-content code {
-            background: #f1f3f5;
-            padding: 1px 5px;
-            border-radius: 4px;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12px;
-            border: 1px solid var(--border-light);
-        }
-
-        .message-content pre {
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 6px;
-            max-width: 100%;
-            overflow-x: auto;
-            margin: 6px 0;
-            border: 1px solid var(--border);
-        }
-
-        .message-content pre code {
-            background: none;
-            padding: 0;
-            font-size: 12px;
-            border: none;
-        }
-
-        .message-content ul, .message-content ol {
-            padding-left: 18px;
-            margin: 4px 0;
-        }
-
-        .message-content li { margin-bottom: 2px; }
-
-        .message-content strong { font-weight: 600; }
-
-        .message-content a {
-            color: var(--accent);
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .message-content a:hover { text-decoration: underline; }
-
-        .message-error {
-            color: var(--error);
-            font-style: italic;
-        }
-
-        .welcome-message {
-            text-align: center;
-            color: var(--text-muted);
-            padding: 24px 16px;
-            font-size: 13px;
-        }
-
-        .typing-indicator {
-            color: var(--text-muted);
-            font-style: italic;
-            font-size: 12px;
-        }
-
-        /* Similar Tickets Panel */
-        .similar-tickets {
-            margin: 4px 0;
-            padding: 10px 12px;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-size: 12px;
-        }
-
-        .similar-tickets-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: var(--text-muted);
-            margin-bottom: 6px;
-        }
-
-        .similar-ticket-item {
-            padding: 4px 0;
-            border-bottom: 1px solid var(--border-light);
-            display: flex;
-            align-items: baseline;
-            gap: 6px;
-        }
-
-        .similar-ticket-item:last-child { border-bottom: none; }
-
-        .similar-ticket-link {
-            color: var(--accent);
-            text-decoration: none;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        .similar-ticket-link:hover { text-decoration: underline; }
-
-        .similar-ticket-summary {
-            color: var(--text-secondary);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            flex: 1;
-        }
-
-        .similar-ticket-status {
-            font-size: 11px;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-
-        /* Input Area */
-        .input-area {
-            display: flex;
-            gap: 8px;
-            padding: 10px 16px;
-            background: var(--bg-primary);
-            border-top: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-
-        .input-area textarea {
-            flex: 1;
-            background: var(--bg-input);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 8px 12px;
-            font-size: 13px;
-            font-family: inherit;
-            resize: none;
-            outline: none;
-            min-height: 38px;
-            max-height: 80px;
-            transition: border-color 0.15s;
-        }
-
-        .input-area textarea::placeholder { color: var(--text-muted); }
-
-        .input-area textarea:focus { border-color: var(--accent); }
-
-        .btn {
-            border: none;
-            border-radius: var(--radius);
-            padding: 8px 16px;
-            font-size: 12px;
-            font-weight: 600;
-            font-family: inherit;
-            cursor: pointer;
-            transition: all 0.15s;
-            white-space: nowrap;
-        }
-
-        .btn-send {
-            background: var(--accent);
-            color: #fff;
-        }
-
-        .btn-send:hover { background: var(--accent-hover); }
-        .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .btn-attach {
-            background: var(--bg-input);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 0 10px;
-            font-size: 15px;
-            cursor: pointer;
-            transition: all 0.15s;
-            flex-shrink: 0;
-        }
-
-        .btn-attach:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        /* Live Messaging — mode toggle, banner, input + message styling.
-           Green (--live) is used ONLY for the live customer channel, so the tech
-           can never confuse "typing to the AI" (orange) with "typing to the
-           customer" (green). */
-        .live-bar {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            padding: 8px 16px 0;
-            background: var(--bg-primary);
-            flex-shrink: 0;
-        }
-
-        .live-toggle {
-            display: flex;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            overflow: hidden;
-        }
-
-        .live-toggle button {
-            flex: 1;
-            border: none;
-            background: var(--bg-primary);
-            color: var(--text-secondary);
-            font-family: inherit;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 6px 8px;
-            cursor: pointer;
-            transition: all 0.15s;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .live-toggle button.active.ai { background: var(--accent); color: #fff; }
-        .live-toggle button.active.live { background: var(--live); color: #fff; }
-
-        .live-banner {
-            display: none;
-            align-items: center;
-            gap: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            color: #fff;
-            background: var(--live);
-            border-radius: 6px;
-            padding: 6px 10px;
-        }
-
-        .live-bar.on .live-banner { display: flex; }
-        .live-as-wrap { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-weight: 600; }
-        .live-as { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.45); border-radius: 5px; font-size: 11px; font-weight: 600; padding: 2px 4px; cursor: pointer; }
-        .live-as option { color: #1f2933; }
-
-        .input-area.live-on textarea {
-            border-color: var(--live);
-            box-shadow: 0 0 0 1px var(--live) inset;
-        }
-        .input-area.live-on textarea:focus { border-color: var(--live); }
-        .input-area.live-on .btn-send { background: var(--live); }
-        .input-area.live-on .btn-send:hover { background: var(--live-hover); }
-
-        .message-tech-out {
-            background: var(--live);
-            color: #fff;
-            align-self: flex-end;
-            border-bottom-right-radius: 5px;
-        }
-        .message-tech-out .message-label { color: rgba(255,255,255,0.9); }
-        .message-tech-out .message-content a { color: #fff; text-decoration: underline; }
-
-        .message-customer-in {
-            background: #eef4ff;
-            border: 1px solid #d4e2fb;
-            align-self: flex-start;
-            border-bottom-left-radius: 5px;
-        }
-
-        .live-system {
-            align-self: center;
-            font-size: 11px;
-            color: var(--text-muted);
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-light);
-            border-radius: 12px;
-            padding: 4px 12px;
-            margin: 2px 0;
-        }
-
-        /* Pending Attachments */
-        .attachment-strip {
-            display: none;
-            gap: 8px;
-            padding: 8px 16px 0;
-            background: var(--bg-primary);
-            border-top: 1px solid var(--border);
-            flex-wrap: wrap;
-            flex-shrink: 0;
-        }
-
-        .attachment-strip.has-items { display: flex; }
-
-        .attachment-strip.has-items + .input-area { border-top: none; }
-
-        .attachment-thumb {
-            position: relative;
-            width: 52px;
-            height: 52px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            overflow: hidden;
-            background: var(--bg-input);
-        }
-
-        .attachment-thumb img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .attachment-thumb .file-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            height: 100%;
-            font-size: 9px;
-            color: var(--text-secondary);
-            text-align: center;
-            padding: 2px;
-            word-break: break-all;
-            overflow: hidden;
-        }
-
-        .attachment-remove {
-            position: absolute;
-            top: 1px;
-            right: 1px;
-            width: 16px;
-            height: 16px;
-            border: none;
-            border-radius: 50%;
-            background: rgba(0,0,0,0.55);
-            color: #fff;
-            font-size: 11px;
-            line-height: 16px;
-            text-align: center;
-            cursor: pointer;
-            padding: 0;
-        }
-
-        /* Images inside chat messages */
-        .message-image {
-            display: block;
-            max-width: 200px;
-            max-height: 140px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            margin-top: 6px;
-            cursor: zoom-in;
-        }
-
-        .message-image.expanded {
-            max-width: 100%;
-            max-height: none;
-            cursor: zoom-out;
-        }
-
-        /* Drag-over highlight */
-        body.drag-over .chat-area {
-            outline: 2px dashed var(--accent);
-            outline-offset: -6px;
-        }
-
-        /* Action Bar */
-        .action-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: var(--bg-primary);
-            border-top: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-
-        .btn-action {
-            background: var(--bg-primary);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 11px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .btn-action:hover {
-            background: var(--accent);
-            color: #fff;
-            border-color: var(--accent);
-        }
-
-        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .action-group { display: flex; gap: 6px; }
-
-        .btn-time {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        .btn-time:hover {
-            background: var(--accent);
-            color: #fff;
-            border-color: var(--accent);
-        }
-
-        .btn-resolve {
-            border-color: var(--warning);
-            color: var(--warning);
-        }
-
-        .btn-resolve:hover {
-            background: var(--warning);
-            color: #fff;
-            border-color: var(--warning);
-        }
-
-        /* Time Entry Modal */
-        .time-modal { max-width: 360px; width: 92%; }
-
-        .time-field {
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-            margin: 8px 0;
-        }
-
-        .time-field > span {
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .time-input {
-            width: 100%;
-            background: var(--bg-input);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 7px 10px;
-            font-size: 13px;
-            font-family: inherit;
-            outline: none;
-            transition: border-color 0.15s;
-        }
-
-        .time-input:focus { border-color: var(--accent); }
-
-        .time-row {
-            display: flex;
-            gap: 10px;
-        }
-
-        .time-row .time-field { flex: 1; margin-top: 0; }
-
-        .time-duration {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            text-align: center;
-            margin: 10px 0 4px;
-        }
-
-        .modal-textarea {
-            width: 100%;
-            background: var(--bg-input);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 8px 10px;
-            font-size: 12px;
-            font-family: inherit;
-            resize: none;
-            min-height: 60px;
-            margin: 8px 0;
-        }
-
-        /* Resolve Modal */
-        .resolve-modal { max-width: 95%; width: 500px; }
-
-        .resolve-status {
-            font-size: 12px;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
-        }
-
-        .email-preview {
-            width: 100%;
-            background: var(--bg-input);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 10px;
-            font-size: 12px;
-            font-family: inherit;
-            max-height: 300px;
-            min-height: 150px;
-            resize: vertical;
-            margin: 6px 0;
-            line-height: 1.5;
-        }
-
-        /* Toast */
-        .toast {
-            position: fixed;
-            bottom: 60px;
-            left: 50%;
-            transform: translateX(-50%) translateY(20px);
-            padding: 10px 20px;
-            border-radius: var(--radius);
-            font-size: 12px;
-            font-weight: 500;
-            opacity: 0;
-            transition: all 0.3s;
-            z-index: 1000;
-            max-width: 90%;
-            text-align: center;
-            box-shadow: var(--shadow-md);
-        }
-
-        .toast.show {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-
-        .toast-success { background: var(--success); color: #fff; }
-        .toast-error { background: var(--error); color: #fff; }
-
-        /* Result banner — persists across the resolve background job */
-        .result-banner {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 1100;
-            padding: 9px 14px;
-            font-size: 12px;
-            font-weight: 500;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            box-shadow: var(--shadow-md);
-        }
-
-        .result-banner.show { display: flex; }
-        .result-banner.info { background: var(--bg-header); color: #fff; }
-        .result-banner.success { background: var(--success); color: #fff; }
-        .result-banner.error { background: var(--error); color: #fff; }
-
-        .result-banner span { flex: 1; line-height: 1.4; }
-
-        .result-banner button {
-            background: rgba(255,255,255,0.2);
-            border: none;
-            color: #fff;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            font-size: 14px;
-            line-height: 1;
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-
-        .result-banner button:hover { background: rgba(255,255,255,0.35); }
-
-        /* Confirmation Dialog */
-        .dialog-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.3);
-            z-index: 900;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .dialog-overlay.show { display: flex; }
-
-        .dialog {
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            max-width: 320px;
-            width: 90%;
-            box-shadow: var(--shadow-md);
-        }
-
-        .dialog p {
-            font-size: 13px;
-            margin-bottom: 14px;
-            line-height: 1.5;
-        }
-
-        .dialog-buttons {
-            display: flex;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-
-        .dialog-buttons .btn {
-            padding: 7px 16px;
-            font-size: 12px;
-        }
-
-        .btn-cancel {
-            background: var(--bg-input);
-            color: var(--text-secondary);
-        }
-
-        .btn-cancel:hover {
-            background: #e5e7eb;
-        }
-
-        .btn-no-time {
-            background: var(--bg-input);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-
-        .btn-no-time:hover {
-            background: #e5e7eb;
-        }
-
-        .btn-confirm {
-            background: var(--accent);
-            color: #fff;
-        }
-
-        .btn-confirm:hover {
-            background: var(--accent-hover);
-        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+
+        /* ===== NTM / Hercules dark theme =====
+           Accent is orange in Assistant (AI) mode and green in Live mode. The
+           whole UI keys off --accent, flipped by body.live-mode, so the tech can
+           never confuse "typing to the AI" with "typing to the customer". */
+        :root{
+            --accent:#F49B4A;
+            --accent-strong:#F49B4A;
+            --accent-text:#1a1205;
+            --accent-soft:rgba(244,155,74,.14);
+            --accent-border:rgba(244,155,74,.55);
+            --accent-glow:rgba(244,155,74,.5);
+
+            --card:#121926;
+            --rail:#0F1622;
+            --panel:#1A2436;
+            --panel-2:#151E2E;
+            --sunken:#0F1622;
+            --border:#28344A;
+            --border-2:#24304a;
+            --border-3:#212c42;
+            --border-4:#2b3854;
+
+            --text:#EAF0F7;
+            --text-body:#dbe4ef;
+            --text-2:#aab8ca;
+            --muted:#64738a;
+            --icon:#8497ab;
+            --live:#3FC873;
+
+            --bubble-ai:#1A2436;
+            --bubble-ai-border:#26324a;
+            --cust-bubble:#152740;
+            --cust-bubble-border:#22406a;
+            --cust-text:#d3e2f4;
+        }
+        body.live-mode{
+            --accent:#3FC873;
+            --accent-text:#04160b;
+            --accent-soft:rgba(63,200,115,.14);
+            --accent-border:rgba(63,200,115,.55);
+            --accent-glow:rgba(63,200,115,.5);
+        }
+
+        html,body{height:100%;}
+        body{
+            background:radial-gradient(120% 90% at 50% 0%,#141a24 0%,#0a0d12 65%);
+            font-family:'IBM Plex Sans',-apple-system,'Segoe UI',sans-serif;
+            color:var(--text);
+            font-size:13px;
+            line-height:1.5;
+            -webkit-font-smoothing:antialiased;
+            overflow:hidden;
+        }
+        a{color:var(--accent);text-decoration:none;}
+        a:hover{text-decoration:underline;}
+
+        .i{font-family:'Material Symbols Rounded';font-variation-settings:'FILL' 1;line-height:1;display:inline-block;font-weight:normal;font-style:normal;white-space:nowrap;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased;user-select:none;}
+
+        @keyframes hpulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+        @keyframes typingBounce{0%,60%,100%{transform:translateY(0);opacity:.35;}30%{transform:translateY(-4px);opacity:.9;}}
+
+        ::-webkit-scrollbar{width:6px;height:6px;}
+        ::-webkit-scrollbar-thumb{background:#2a3550;border-radius:4px;}
+        ::-webkit-scrollbar-track{background:transparent;}
+
+        /* ===== shell ===== */
+        .app{height:100vh;width:100%;display:flex;background:var(--card);overflow:hidden;}
+
+        /* ===== left rail ===== */
+        .rail{flex:0 0 176px;min-width:0;background:var(--rail);border-right:1px solid var(--border-2);display:flex;flex-direction:column;padding:13px 10px;gap:5px;z-index:7;transition:flex-basis .32s cubic-bezier(.4,0,.2,1);overflow:hidden;}
+        body.rail-collapsed .rail{flex-basis:60px;}
+        .rail-brand{display:flex;align-items:center;gap:10px;margin-bottom:10px;height:34px;flex-shrink:0;}
+        .rail-logo{width:34px;height:34px;border-radius:9px;background:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+        .rail-logo img{width:23px;height:23px;object-fit:contain;}
+        .rail-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:#F3F7FC;white-space:nowrap;}
+        .nav-btn{display:flex;align-items:center;gap:12px;width:100%;height:38px;padding:0 7px;border:none;border-radius:10px;background:transparent;color:var(--icon);cursor:pointer;transition:background .2s,color .2s;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;text-align:left;}
+        .nav-btn .i{font-size:21px;flex-shrink:0;}
+        .nav-btn:hover{background:rgba(255,255,255,.04);color:var(--text-2);}
+        .nav-btn.active{background:var(--accent-soft);color:var(--accent);}
+        .rail .label{white-space:nowrap;opacity:1;transition:opacity .2s;}
+        body.rail-collapsed .rail .label{opacity:0;}
+        .rail-bottom{margin-top:auto;display:flex;flex-direction:column;gap:6px;}
+        .rail-status{display:flex;align-items:center;gap:10px;padding:0 8px;height:24px;}
+        .rail-status .dot{width:8px;height:8px;border-radius:50%;background:var(--live);box-shadow:0 0 8px rgba(63,200,115,.7);flex-shrink:0;}
+        .rail-status .label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;color:var(--muted);}
+        .rail-collapse{display:flex;align-items:center;gap:12px;width:100%;height:36px;padding:0 7px;border:1px solid var(--border-2);border-radius:10px;background:#141d2c;color:var(--icon);cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;}
+        .rail-collapse .i{font-size:20px;flex-shrink:0;transform:rotate(180deg);transition:transform .32s;}
+        body.rail-collapsed .rail-collapse .i{transform:rotate(0deg);}
+
+        /* ===== main column ===== */
+        .main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;}
+
+        .top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 12px;flex-shrink:0;}
+        .top-titles{min-width:0;}
+        .top-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;color:#F3F7FC;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .top-sub{font-size:11px;font-weight:500;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .top-controls{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+        .icon-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--panel);color:var(--icon);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,border-color .15s;flex-shrink:0;}
+        .icon-btn .i{font-size:19px;}
+        .icon-btn:hover{color:var(--text);border-color:var(--accent-border);}
+        .icon-btn:disabled{opacity:.4;cursor:not-allowed;}
+        .icon-btn.sc{color:#4aa8e0;}
+        .model-wrap{display:flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:0 6px 0 10px;height:34px;}
+        .model-wrap .i{font-size:16px;color:var(--muted);pointer-events:none;}
+        #modelSelect{background:transparent;border:none;outline:none;color:var(--text-2);font-family:'IBM Plex Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;max-width:120px;-webkit-appearance:none;appearance:none;padding-right:2px;}
+        #modelSelect option{color:var(--text);background:var(--panel);}
+
+        .context-card{margin:0 16px 12px;padding:11px 13px;background:var(--panel);border:1px solid var(--border-2);border-radius:11px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;gap:10px;transition:border-color .15s;}
+        .context-card:hover{border-color:var(--accent-border);}
+        .ctx-id{font-size:12px;font-weight:600;color:var(--accent);flex-shrink:0;}
+        .ctx-mid{min-width:0;flex:1;}
+        .ctx-summary{font-size:12px;color:#cdd8e4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .ctx-meta{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .ctx-priority{font-size:10px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:5px;padding:3px 7px;flex-shrink:0;white-space:nowrap;}
+
+        /* ===== panels / views ===== */
+        .panels{position:relative;flex:1;min-height:0;}
+        .view{position:absolute;inset:0;display:flex;flex-direction:column;opacity:0;transform:translateX(12px);pointer-events:none;transition:opacity .3s ease,transform .3s ease;}
+        .view.active{opacity:1;transform:none;pointer-events:auto;}
+
+        /* mode pill */
+        .mode-pill-wrap{padding:0 16px 10px;flex-shrink:0;}
+        .mode-pill{position:relative;display:flex;background:var(--sunken);border:1px solid var(--border-2);border-radius:11px;padding:4px;height:42px;}
+        .mode-pill .indicator{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:8px;background:var(--accent);transform:translateX(0);transition:transform .34s cubic-bezier(.4,0,.2,1),background .34s;box-shadow:0 4px 14px -4px var(--accent-glow);}
+        body.live-mode .mode-pill .indicator{transform:translateX(calc(100% + 2px));}
+        .mode-tab{position:relative;z-index:2;flex:1;border:none;background:none;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:var(--icon);display:flex;align-items:center;justify-content:center;gap:7px;transition:color .2s;}
+        .mode-tab .i{font-size:18px;}
+        .mode-tab.active{color:var(--accent-text);}
+
+        /* threads */
+        .threads{position:relative;flex:1;min-height:0;}
+        .thread{position:absolute;inset:0;overflow-y:auto;padding:4px 16px 8px;display:flex;flex-direction:column;gap:14px;opacity:0;transform:translateX(10px);pointer-events:none;transition:opacity .3s ease,transform .3s ease;}
+        .thread.ai{opacity:1;transform:none;pointer-events:auto;}
+        body.live-mode .thread.ai{opacity:0;transform:translateX(-10px);pointer-events:none;}
+        body.live-mode .thread.live{opacity:1;transform:none;pointer-events:auto;}
+
+        .welcome{text-align:center;color:var(--muted);padding:22px 10px;font-size:12.5px;line-height:1.6;}
+
+        .msg-row{display:flex;flex-direction:column;gap:6px;max-width:88%;}
+        .msg-row.in{align-items:flex-start;align-self:flex-start;}
+        .msg-row.out{align-items:flex-end;align-self:flex-end;}
+        .msg-name{font-size:11px;font-weight:600;color:var(--muted);padding:0 2px;}
+        .bubble{border-radius:12px;padding:11px 13px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word;}
+        .bubble-ai{background:var(--bubble-ai);border:1px solid var(--bubble-ai-border);border-top-left-radius:4px;color:var(--text-body);}
+        .bubble-user{background:var(--accent);border-top-right-radius:4px;color:var(--accent-text);font-weight:500;}
+        .bubble-out{background:var(--live);border-top-right-radius:4px;color:#04160b;font-weight:500;}
+        .bubble-in{background:var(--cust-bubble);border:1px solid var(--cust-bubble-border);border-top-left-radius:4px;color:var(--cust-text);}
+        .bubble.err{color:#ff9a9a;font-style:italic;}
+
+        .bubble p{margin-bottom:3px;}
+        .bubble p:last-child{margin-bottom:0;}
+        .bubble code{background:#0F1622;padding:1px 5px;border-radius:4px;font-family:'IBM Plex Mono','Consolas',monospace;font-size:12px;border:1px solid var(--bubble-ai-border);}
+        .bubble pre{background:#0F1622;padding:10px;border-radius:8px;max-width:100%;overflow-x:auto;margin:6px 0;border:1px solid var(--border-2);}
+        .bubble pre code{background:none;padding:0;border:none;}
+        .bubble ul,.bubble ol{padding-left:18px;margin:4px 0;}
+        .bubble li{margin-bottom:2px;}
+        .bubble-user a,.bubble-out a{color:#fff;text-decoration:underline;}
+
+        .msg-image{display:block;max-width:200px;max-height:150px;border-radius:8px;border:1px solid var(--border-2);margin-top:8px;cursor:zoom-in;}
+        .msg-image.expanded{max-width:100%;max-height:none;cursor:zoom-out;}
+        .att-chip{margin-top:8px;font-size:12px;opacity:.85;}
+
+        /* related tickets card */
+        .related{background:var(--panel-2);border:1px solid var(--bubble-ai-border);border-radius:12px;padding:11px 13px;}
+        .related-title{font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-bottom:9px;}
+        .related-item{display:flex;align-items:baseline;gap:9px;padding:5px 0;border-bottom:1px solid var(--border-3);}
+        .related-item:last-child{border-bottom:none;}
+        .related-item .num{font-size:11px;font-weight:600;color:var(--accent);white-space:nowrap;}
+        .related-item .sum{font-size:12px;color:var(--text-2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .related-item .st{font-size:10px;color:var(--muted);white-space:nowrap;}
+
+        /* live channel header + system lines + typing + receipts */
+        .live-head{align-self:center;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:5px 13px;text-align:center;}
+        .live-head b{color:var(--live);font-weight:600;}
+        .live-system{align-self:center;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:4px 12px;}
+        .typing-dots{display:inline-flex;gap:4px;align-items:center;color:var(--cust-text);}
+        .typing-dots span{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.35;animation:typingBounce 1.2s infinite;}
+        .typing-dots span:nth-child(2){animation-delay:.18s;}
+        .typing-dots span:nth-child(3){animation-delay:.36s;}
+        .read-receipt{align-self:flex-end;font-size:10px;color:var(--muted);padding:0 4px;margin-top:-8px;display:flex;align-items:center;gap:3px;}
+        .read-receipt.is-read{color:var(--live);}
+        .read-receipt .i{font-size:13px;}
+
+        /* composer */
+        .composer-wrap{padding:8px 16px 14px;flex-shrink:0;}
+        .attach-strip{display:none;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+        .attach-strip.has-items{display:flex;}
+        .attach-thumb{position:relative;width:52px;height:52px;border-radius:8px;border:1px solid var(--border);overflow:hidden;background:var(--sunken);}
+        .attach-thumb img{width:100%;height:100%;object-fit:cover;}
+        .attach-thumb .file-label{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:9px;color:var(--text-2);text-align:center;padding:2px;word-break:break-all;overflow:hidden;}
+        .attach-remove{position:absolute;top:1px;right:1px;width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;font-size:11px;line-height:16px;text-align:center;cursor:pointer;padding:0;}
+
+        .mode-indicator{display:flex;align-items:center;gap:6px;margin-bottom:8px;}
+        .mode-indicator .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);}
+        body.live-mode .mode-indicator .dot{animation:hpulse 1.6s ease-in-out infinite;}
+        .mode-indicator span:last-child{font-size:11px;font-weight:500;color:var(--accent);}
+
+        .composer{display:flex;align-items:flex-end;gap:8px;background:var(--panel);border:1px solid var(--accent-border);border-radius:13px;padding:6px 6px 6px 10px;transition:border-color .3s;}
+        .composer .att{flex-shrink:0;width:34px;height:34px;border-radius:9px;border:none;background:transparent;color:var(--icon);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+        .composer .att .i{font-size:20px;}
+        .composer .att:hover{color:var(--accent);}
+        .composer textarea{flex:1;background:transparent;color:var(--text);border:none;padding:8px 0;font-family:'IBM Plex Sans',sans-serif;font-size:13px;resize:none;outline:none;height:34px;max-height:90px;line-height:1.4;}
+        .composer textarea::placeholder{color:var(--muted);}
+        .composer .send{flex-shrink:0;width:38px;height:38px;border-radius:10px;border:none;background:var(--accent);color:var(--accent-text);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .3s,opacity .2s;}
+        .composer .send .i{font-size:20px;}
+        .composer .send:disabled{opacity:.4;cursor:not-allowed;}
+        /* Attachments are analyzed by the AI assistant only — live chat has no file transport
+           to the customer, so hide the affordance (and any pending AI attachments) in live mode. */
+        body.live-mode .composer .att{display:none;}
+        body.live-mode .attach-strip{display:none !important;}
+
+        .action-row{display:flex;align-items:center;gap:8px;margin-top:10px;}
+        .act{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:var(--panel);color:#c6d2df;border-radius:10px;padding:9px;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s,background .15s;white-space:nowrap;}
+        .act .i{font-size:17px;color:var(--icon);}
+        .act:hover{border-color:var(--accent-border);}
+        .act:disabled{opacity:.45;cursor:not-allowed;}
+        .act.time .i{color:var(--accent);}
+        .act.resolve{border-color:rgba(63,200,115,.4);background:rgba(63,200,115,.12);color:#8ee6ac;font-weight:600;}
+        .act.resolve .i{color:#8ee6ac;}
+        .act.resolve:hover{border-color:rgba(63,200,115,.7);}
+
+        /* notes / history / settings shared */
+        .scroll-view{position:absolute;inset:0;overflow-y:auto;padding:2px 16px 16px;display:flex;flex-direction:column;gap:11px;}
+        .section-label{font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;}
+        .detail-card{background:var(--panel);border:1px solid var(--border-2);border-radius:11px;padding:4px 13px;}
+        .detail-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border-3);}
+        .detail-row:last-child{border-bottom:none;}
+        .detail-row .k{font-size:12px;color:var(--muted);}
+        .detail-row .v{font-size:12px;color:#e6edf5;font-weight:500;text-align:right;}
+        .detail-row .v.accent{color:var(--accent);font-weight:600;}
+        .note-card{background:var(--panel);border:1px solid var(--border-2);border-radius:11px;padding:11px 13px;}
+        .note-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;}
+        .note-who{font-size:11px;font-weight:600;color:#cdd8e4;}
+        .note-when{font-size:10px;color:var(--muted);white-space:nowrap;}
+        .note-flag{font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:5px;}
+        .note-flag.internal{color:var(--accent);background:var(--accent-soft);}
+        .note-flag.external{color:#8ee6ac;background:rgba(63,200,115,.12);}
+        .note-body{font-size:12px;line-height:1.55;color:#c6d2df;white-space:pre-wrap;overflow-wrap:anywhere;}
+        .empty-hint{color:var(--muted);font-size:12px;padding:14px 4px;text-align:center;}
+
+        /* timeline */
+        .tl-item{display:flex;gap:11px;}
+        .tl-rail{display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding-top:3px;}
+        .tl-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);}
+        .tl-dot.accent{background:var(--accent);}
+        .tl-dot.live{background:var(--live);}
+        .tl-line{flex:1;width:2px;background:var(--border-3);margin-top:3px;}
+        .tl-body{padding-bottom:14px;min-width:0;}
+        .tl-title{font-size:12px;color:#e6edf5;font-weight:500;}
+        .tl-sub{font-size:11px;color:var(--muted);margin-top:1px;overflow-wrap:anywhere;}
+
+        .setting-btn{display:flex;align-items:center;gap:10px;width:100%;border:1px solid var(--border);background:var(--panel);color:#cdd8e4;border-radius:10px;padding:11px 13px;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:border-color .15s;text-align:left;}
+        .setting-btn .i{font-size:19px;color:var(--icon);}
+        .setting-btn:hover{border-color:var(--accent-border);}
+        .setting-btn:disabled{opacity:.45;cursor:not-allowed;}
+        .setting-btn.danger{color:#f0a3a3;}
+        .setting-btn.danger .i{color:#f0a3a3;}
+        .setting-btn.sc .i{color:#4aa8e0;}
+
+        /* ===== overlay + bottom sheets ===== */
+        .overlay{position:absolute;inset:0;background:rgba(5,8,14,.62);opacity:0;pointer-events:none;transition:opacity .3s;z-index:8;}
+        .overlay.show{opacity:1;pointer-events:auto;}
+        .sheet{position:absolute;left:0;right:0;bottom:0;z-index:9;background:var(--panel-2);border-top:1px solid var(--border-4);border-radius:18px 18px 0 0;padding:18px;transform:translateY(112%);transition:transform .34s cubic-bezier(.32,.72,0,1);box-shadow:0 -20px 50px -20px rgba(0,0,0,.7);max-height:calc(100% - 8px);overflow-y:auto;}
+        .sheet.open{transform:translateY(0);}
+        .sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+        .sheet-title{font-size:16px;font-weight:600;color:#F3F7FC;font-family:'Space Grotesk',sans-serif;}
+        .sheet-close{width:30px;height:30px;border-radius:9px;border:1px solid var(--border-4);background:var(--panel);color:var(--icon);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+        .sheet-close .i{font-size:18px;}
+        .sheet-body{display:flex;flex-direction:column;gap:11px;}
+        .field{display:flex;flex-direction:column;gap:5px;}
+        .field > span{font-size:11px;font-weight:600;color:var(--muted);}
+        .field-row{display:flex;gap:11px;}
+        .field-row .field{flex:1;}
+        .inp{width:100%;background:var(--sunken);border:1px solid var(--border-4);border-radius:9px;padding:10px 12px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:13px;outline:none;transition:border-color .15s;}
+        .inp:focus{border-color:var(--accent-border);}
+        select.inp{-webkit-appearance:none;appearance:none;cursor:pointer;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 16px) 17px,calc(100% - 11px) 17px;background-size:5px 5px;background-repeat:no-repeat;}
+        select.inp option{background:var(--panel);color:var(--text);}
+        textarea.inp{resize:none;line-height:1.55;}
+        .sheet-hint{font-size:12px;color:var(--icon);line-height:1.5;}
+        .duration{text-align:center;font-size:13px;font-weight:600;color:var(--accent);}
+        .sheet-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:2px;flex-wrap:wrap;}
+        .btn{border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:9px;padding:9px 16px;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:opacity .2s;}
+        .btn:hover{opacity:.85;}
+        .btn:disabled{opacity:.45;cursor:not-allowed;}
+        .btn-primary{border:none;background:var(--accent);color:var(--accent-text);font-weight:600;}
+        .btn-green{border:none;background:var(--live);color:#04160b;font-weight:600;}
+
+        /* confirm dialog (centered) */
+        .confirm-overlay{position:fixed;inset:0;background:rgba(5,8,14,.66);z-index:1000;display:none;align-items:center;justify-content:center;padding:20px;}
+        .confirm-overlay.show{display:flex;}
+        .confirm{background:var(--panel-2);border:1px solid var(--border-4);border-radius:14px;padding:20px;max-width:340px;width:100%;box-shadow:0 30px 70px -30px rgba(0,0,0,.85);}
+        .confirm p{font-size:13px;line-height:1.55;color:var(--text-body);margin-bottom:16px;}
+
+        /* toast + result banner */
+        .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);padding:10px 18px;border-radius:10px;font-size:12px;font-weight:500;opacity:0;transition:all .3s;z-index:1200;max-width:90%;text-align:center;box-shadow:0 10px 30px -10px rgba(0,0,0,.7);}
+        .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+        .toast-success{background:var(--live);color:#04160b;}
+        .toast-error{background:#e5484d;color:#fff;}
+
+        .result-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:1100;padding:10px 14px;font-size:12px;font-weight:500;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 10px 30px -10px rgba(0,0,0,.6);}
+        .result-banner.show{display:flex;}
+        .result-banner.info{background:#1f4e6b;color:#fff;}
+        .result-banner.success{background:var(--live);color:#04160b;}
+        .result-banner.error{background:#e5484d;color:#fff;}
+        .result-banner span{flex:1;line-height:1.4;}
+        .result-banner button{background:rgba(255,255,255,.2);border:none;color:inherit;width:20px;height:20px;border-radius:50%;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;}
+
+        /* error state */
+        .error-wrap{display:flex;flex-direction:column;height:100vh;padding:24px;align-items:center;justify-content:center;gap:14px;text-align:center;}
+        .error-logo{width:44px;height:44px;border-radius:11px;background:#fff;display:flex;align-items:center;justify-content:center;}
+        .error-logo img{width:30px;height:30px;}
+        .error-msg{color:#ff9a9a;font-weight:500;font-size:14px;}
+        .error-sub{color:var(--muted);font-size:12px;}
+
+        body.drag-over .thread.ai,body.drag-over .thread.live{outline:2px dashed var(--accent);outline-offset:-6px;border-radius:10px;}
     </style>
 </head>
 <body>
     {% if error %}
-    <div class="header">
-        <div class="header-brand">
-            <img class="header-logo" src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM">
-            <span class="header-title">Hercules</span>
-        </div>
-    </div>
-    <div class="error-banner">{{ error }}</div>
-    <div class="chat-area">
-        <div class="welcome-message">Unable to load ticket data. Please check the configuration and try refreshing.</div>
+    <div class="error-wrap">
+        <div class="error-logo"><img src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM"></div>
+        <div class="error-msg">{{ error }}</div>
+        <div class="error-sub">Unable to load ticket data. Check the configuration and refresh.</div>
     </div>
     {% else %}
-    <div class="header">
-        <div class="header-brand">
-            <img class="header-logo" src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM">
-            <div style="display:flex; flex-direction:column; min-width:0;">
-                <span class="header-title">Hercules</span>
-                <span class="header-subtitle">NTM AI Assistant</span>
+    <div class="app">
+        <!-- ===== left rail ===== -->
+        <nav class="rail">
+            <div class="rail-brand">
+                <div class="rail-logo"><img src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM"></div>
+                <span class="rail-title label">Hercules</span>
             </div>
-        </div>
-        <div class="header-controls">
-            <select class="model-select" id="modelSelect">
-                {% for m in models %}
-                <option value="{{ m.id }}">{{ m.label }}</option>
-                {% endfor %}
-            </select>
-        </div>
-    </div>
-
-    <div class="context-bar" id="contextBar">
-        <div class="context-summary">
-            <strong>Ticket #{{ ticket.id }}:</strong> {{ ticket.summary[:80] }}
-            &nbsp;|&nbsp; {{ ticket.company_name }} &nbsp;|&nbsp; {{ ticket.priority }}
-        </div>
-        <div class="context-details" id="contextDetails">
-            <div><strong>Company:</strong> {{ ticket.company_name }}</div>
-            <div><strong>Contact:</strong> {{ ticket.contact_name }}</div>
-            <div><strong>Status:</strong> {{ ticket.status }}</div>
-            <div><strong>Board:</strong> {{ ticket.board }}</div>
-            <div><strong>Type:</strong> {{ ticket.type }} / {{ ticket.subtype }}</div>
-            <div><strong>Priority:</strong> {{ ticket.priority }}</div>
-            {% if ticket.owner_name %}
-            <div><strong>Owner:</strong> {{ ticket.owner_name }}</div>
-            {% endif %}
-            {% if ticket.initial_description %}
-            <div style="margin-top:4px"><strong>Description:</strong> {{ ticket.initial_description[:300] }}</div>
-            {% endif %}
-        </div>
-    </div>
-
-    <div class="chat-area" id="chatArea">
-        <div class="welcome-message">
-            Hi, I'm Hercules — ask me anything about this ticket. I have the full context loaded.
-        </div>
-    </div>
-
-    <div class="live-bar" id="liveBar">
-        <div class="live-toggle">
-            <button type="button" id="liveToggleAi" class="active ai">Ask Hercules (AI)</button>
-            <button type="button" id="liveToggleLive" class="live">Live: message {{ ticket.contact_name or 'customer' }}</button>
-        </div>
-        <div class="live-banner">
-            &#9679;&nbsp;LIVE &mdash; messages go straight to {{ ticket.contact_name or 'the customer' }}
-            <span class="live-as-wrap">&middot; messaging as
-                <select id="liveAsSelect" class="live-as" title="Who the customer sees you as"></select>
-            </span>
-        </div>
-    </div>
-
-    <div class="attachment-strip" id="attachmentStrip"></div>
-
-    <div class="input-area">
-        <button class="btn-attach" id="attachBtn" title="Attach image or file">&#128206;</button>
-        <input type="file" id="fileInput" accept="image/*,.txt,.log,.csv" multiple style="display:none">
-        <textarea id="chatInput" placeholder="Type a message or paste a screenshot..." rows="1"></textarea>
-        <button class="btn btn-send" id="sendBtn">Send</button>
-    </div>
-
-    <div class="action-bar">
-        <div class="action-group">
-            <button class="btn-action btn-time" id="addTimeBtn" title="Log time worked on this ticket">&#128338; Add Time</button>
-            <button class="btn-action btn-save" id="saveBtn" disabled>Save to Ticket</button>
-            <button class="btn-action btn-resolve" id="resolveBtn">Resolve</button>
-        </div>
-        <button class="btn-action btn-clear" id="clearBtn">Clear</button>
-    </div>
-
-    <!-- Confirmation Dialog -->
-    <div class="dialog-overlay" id="dialogOverlay">
-        <div class="dialog">
-            <p id="dialogMessage"></p>
-            <div class="dialog-buttons">
-                <button class="btn btn-cancel" id="dialogCancel">Cancel</button>
-                <button class="btn btn-confirm" id="dialogConfirm">Confirm</button>
+            <button type="button" class="nav-btn active" id="nav-chat" title="Chat"><span class="i">forum</span><span class="label">Chat</span></button>
+            <button type="button" class="nav-btn" id="nav-notes" title="Ticket notes"><span class="i">description</span><span class="label">Ticket notes</span></button>
+            <button type="button" class="nav-btn" id="nav-history" title="History"><span class="i">history</span><span class="label">History</span></button>
+            <button type="button" class="nav-btn" id="nav-settings" title="Settings"><span class="i">settings</span><span class="label">Settings</span></button>
+            <div class="rail-bottom">
+                <div class="rail-status"><span class="dot"></span><span class="label">ONLINE</span></div>
+                <button type="button" class="rail-collapse" id="railCollapse" title="Collapse menu"><span class="i">chevron_right</span><span class="label">Collapse</span></button>
             </div>
-        </div>
-    </div>
+        </nav>
 
-    <!-- Time Entry Modal -->
-    <div class="dialog-overlay" id="timeModalOverlay">
-        <div class="dialog time-modal">
-            <p style="font-weight:600; margin-bottom:4px;" id="timeModalTitle">Add Time &mdash; Ticket #{{ ticket.id }}</p>
-            <p class="resolve-status" id="timeModalHint" style="display:none">Log the time you worked, or skip if no time is needed.</p>
-            <label class="time-field">
-                <span>Technician</span>
-                <select class="time-input" id="timeMember"></select>
-            </label>
-            <label class="time-field">
-                <span>Date</span>
-                <input type="date" class="time-input" id="timeDate">
-            </label>
-            <div class="time-row">
-                <label class="time-field">
-                    <span>Start</span>
-                    <input type="time" class="time-input" id="timeStartInput">
-                </label>
-                <label class="time-field">
-                    <span>End</span>
-                    <input type="time" class="time-input" id="timeEndInput">
-                </label>
+        <!-- ===== main column ===== -->
+        <div class="main">
+            <div class="top">
+                <div class="top-titles">
+                    <div class="top-title" id="topTitle">Hercules</div>
+                    <div class="top-sub" id="topSub">Ticket console</div>
+                </div>
+                <div class="top-controls">
+                    <button class="icon-btn sc js-sc" id="scBtn" title="Open this computer in ScreenConnect"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">screen_share</span></button>
+                    <button class="icon-btn sc js-sc" id="scBackstageBtn" title="ScreenConnect — Backstage / choose session"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">terminal</span></button>
+                    <div class="model-wrap">
+                        <select id="modelSelect" title="AI model">
+                            {% for m in models %}
+                            <option value="{{ m.id }}">{{ m.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <span class="i">expand_more</span>
+                    </div>
+                </div>
             </div>
-            <div class="time-duration" id="timeDuration">Duration: &mdash;</div>
-            <textarea class="modal-textarea" id="timeNote" placeholder="What did you work on? (optional)"></textarea>
-            <div class="dialog-buttons">
-                <button class="btn btn-cancel" id="timeCancel">Cancel</button>
-                <button class="btn btn-no-time" id="timeSkip" style="display:none">Skip Time</button>
-                <button class="btn btn-confirm" id="timeSubmit">Save Time Entry</button>
-            </div>
-        </div>
-    </div>
 
-    <!-- Resolve Modal -->
-    <div class="dialog-overlay" id="resolveModalOverlay">
-        <div class="dialog resolve-modal">
-            <p style="font-weight:600; margin-bottom:4px;">Resolve Ticket</p>
-            <p class="resolve-status" id="resolveStatus">Generating customer email draft...</p>
-            <div id="categorySection" style="display:none">
-                <p style="font-size:11px; color:var(--text-muted); margin-bottom:2px;">Ticket categorization (required to resolve):</p>
-                <label class="time-field"><span>Type</span><select class="time-input" id="resType"></select></label>
-                <label class="time-field"><span>Subtype</span><select class="time-input" id="resSubtype"></select></label>
-                <label class="time-field"><span>Item</span><select class="time-input" id="resItem"></select></label>
+            <div class="context-card" id="contextCard" title="Open ticket details">
+                <span class="ctx-id">#{{ ticket.id }}</span>
+                <div class="ctx-mid">
+                    <div class="ctx-summary">{{ ticket.summary }}</div>
+                    <div class="ctx-meta">{{ ticket.company_name }}{% if ticket.contact_name %} · {{ ticket.contact_name }}{% endif %}</div>
+                </div>
+                {% if ticket.priority %}<span class="ctx-priority">{{ ticket.priority }}</span>{% endif %}
             </div>
-            <div id="emailSection" style="display:none">
-                <p style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Customer Email Draft (editable):</p>
-                <textarea class="email-preview" id="emailPreview" rows="10"></textarea>
-                <div class="dialog-buttons" style="margin-top:8px">
-                    <button class="btn btn-cancel" id="resolveSkipEmail">Don't Send</button>
-                    <button class="btn btn-confirm" id="resolveSendEmail">Send to Contact</button>
+
+            <div class="panels">
+                <!-- ===== CHAT VIEW ===== -->
+                <section class="view active" id="view-chat">
+                    <div class="mode-pill-wrap">
+                        <div class="mode-pill">
+                            <div class="indicator"></div>
+                            <button type="button" class="mode-tab active" id="aiTab"><span class="i">forum</span>Assistant</button>
+                            <button type="button" class="mode-tab" id="liveTab"><span class="i">support_agent</span>Live chat</button>
+                        </div>
+                    </div>
+
+                    <div class="threads">
+                        <div class="thread ai" id="aiThread">
+                            <div class="welcome">Hi, I'm Hercules — ask me anything about this ticket. I have the full context loaded.</div>
+                        </div>
+                        <div class="thread live" id="liveThread">
+                            <div class="live-head" id="liveHead">Live channel · messaging as <b id="liveAsName">technician</b></div>
+                        </div>
+                    </div>
+
+                    <div class="composer-wrap">
+                        <div class="attach-strip" id="attachStrip"></div>
+                        <div class="mode-indicator"><span class="dot"></span><span id="modeText">Assistant — ask about this ticket</span></div>
+                        <div class="composer" id="composer">
+                            <button class="att" id="attachBtn" title="Attach image or file"><span class="i">attach_file</span></button>
+                            <input type="file" id="fileInput" accept="image/*,.txt,.log,.csv" multiple style="display:none">
+                            <textarea id="chatInput" rows="1" placeholder="Ask about ticket #{{ ticket.id }}…"></textarea>
+                            <button class="send" id="sendBtn" title="Send"><span class="i">send</span></button>
+                        </div>
+                        <div class="action-row">
+                            <button class="act time" id="addTimeBtn"><span class="i">schedule</span>Add Time</button>
+                            <button class="act" id="saveBtn" disabled><span class="i">bookmark_add</span>Save</button>
+                            <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ===== NOTES VIEW ===== -->
+                <section class="view" id="view-notes">
+                    <div class="scroll-view">
+                        <div class="section-label">Ticket details</div>
+                        <div class="detail-card">
+                            <div class="detail-row"><span class="k">Status</span><span class="v">{{ ticket.status or '—' }}</span></div>
+                            <div class="detail-row"><span class="k">Priority</span><span class="v accent">{{ ticket.priority or '—' }}</span></div>
+                            <div class="detail-row"><span class="k">Board</span><span class="v">{{ ticket.board or '—' }}</span></div>
+                            <div class="detail-row"><span class="k">Type</span><span class="v">{{ ticket.type or '—' }}{% if ticket.subtype %} / {{ ticket.subtype }}{% endif %}</span></div>
+                            <div class="detail-row"><span class="k">Company</span><span class="v">{{ ticket.company_name or '—' }}</span></div>
+                            <div class="detail-row"><span class="k">Contact</span><span class="v">{{ ticket.contact_name or '—' }}</span></div>
+                            {% if ticket.owner_name %}<div class="detail-row"><span class="k">Owner</span><span class="v">{{ ticket.owner_name }}</span></div>{% endif %}
+                        </div>
+                        {% if ticket.initial_description %}
+                        <div class="section-label">Description</div>
+                        <div class="note-card"><div class="note-body">{{ ticket.initial_description[:600] }}</div></div>
+                        {% endif %}
+                        <div class="section-label">Ticket notes</div>
+                        <div id="notesList" style="display:flex;flex-direction:column;gap:11px;"></div>
+                    </div>
+                </section>
+
+                <!-- ===== HISTORY VIEW ===== -->
+                <section class="view" id="view-history">
+                    <div class="scroll-view">
+                        <div class="section-label" style="margin-bottom:2px;">Activity timeline</div>
+                        <div id="historyList" style="display:flex;flex-direction:column;"></div>
+                    </div>
+                </section>
+
+                <!-- ===== SETTINGS VIEW ===== -->
+                <section class="view" id="view-settings">
+                    <div class="scroll-view">
+                        <div class="section-label">Live chat identity</div>
+                        <div class="detail-card">
+                            <div class="detail-row"><span class="k">Messaging as</span><span class="v" id="setIdentity">—</span></div>
+                            <div class="detail-row"><span class="k">Source</span><span class="v" id="setIdentitySrc">—</span></div>
+                        </div>
+                        <div class="section-label">Remote control</div>
+                        <button type="button" class="setting-btn sc js-sc" id="setScBtn"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">screen_share</span>Open in ScreenConnect</button>
+                        <button type="button" class="setting-btn sc js-sc" id="setScBackstageBtn"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">terminal</span>Backstage / choose session</button>
+                        {% if not screenconnect_enabled %}<div class="empty-hint" style="text-align:left;padding:2px 4px;">ScreenConnect is not configured on this server.</div>{% endif %}
+                        <div class="section-label">Conversation</div>
+                        <button type="button" class="setting-btn danger" id="clearBtn"><span class="i">delete_sweep</span>Clear AI conversation</button>
+                        <div class="section-label">About</div>
+                        <div class="detail-card">
+                            <div class="detail-row"><span class="k">Ticket</span><span class="v">#{{ ticket.id }}</span></div>
+                            <div class="detail-row"><span class="k">Assistant</span><span class="v" id="setModel">—</span></div>
+                            <div class="detail-row"><span class="k">Connection</span><span class="v" style="color:var(--live);">Online</span></div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===== overlay + sheets (cover main column) ===== -->
+            <div class="overlay" id="overlay"></div>
+
+            <!-- Add Time / Log Time sheet -->
+            <div class="sheet" id="timeSheet">
+                <div class="sheet-head">
+                    <div class="sheet-title" id="timeSheetTitle">Add Time · #{{ ticket.id }}</div>
+                    <button class="sheet-close" id="timeClose"><span class="i">close</span></button>
+                </div>
+                <div class="sheet-body">
+                    <div class="sheet-hint" id="timeHint" style="display:none;">Log the time you worked, or skip if no time is needed.</div>
+                    <label class="field"><span>Technician</span><select class="inp" id="timeMember"></select></label>
+                    <label class="field"><span>Date</span><input type="date" class="inp" id="timeDate"></label>
+                    <div class="field-row">
+                        <label class="field"><span>Start</span><input type="time" class="inp" id="timeStartInput"></label>
+                        <label class="field"><span>End</span><input type="time" class="inp" id="timeEndInput"></label>
+                    </div>
+                    <div class="duration" id="timeDuration">Duration · —</div>
+                    <textarea class="inp" id="timeNote" rows="2" placeholder="What did you work on?"></textarea>
+                    <div class="sheet-actions">
+                        <button class="btn" id="timeCancel">Cancel</button>
+                        <button class="btn" id="timeSkip" style="display:none;">Skip Time</button>
+                        <button class="btn btn-primary" id="timeSubmit">Save Time</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Resolve sheet -->
+            <div class="sheet" id="resolveSheet">
+                <div class="sheet-head">
+                    <div class="sheet-title">Resolve · #{{ ticket.id }}</div>
+                    <button class="sheet-close" id="resolveClose"><span class="i">close</span></button>
+                </div>
+                <div class="sheet-body">
+                    <div class="sheet-hint" id="resolveStatus">Preparing resolution…</div>
+                    <div id="categorySection" style="display:none;flex-direction:column;gap:11px;">
+                        <label class="field"><span>Type</span><select class="inp" id="resType"></select></label>
+                        <label class="field"><span>Subtype</span><select class="inp" id="resSubtype"></select></label>
+                        <label class="field"><span>Item</span><select class="inp" id="resItem"></select></label>
+                    </div>
+                    <div id="emailSection" style="display:none;flex-direction:column;gap:9px;">
+                        <span style="font-size:11px;font-weight:600;color:var(--muted);">Customer email draft — review before sending</span>
+                        <textarea class="inp" id="emailPreview" rows="6"></textarea>
+                        <div class="sheet-actions">
+                            <button class="btn" id="resolveSkipEmail">Resolve, Don't Email</button>
+                            <button class="btn btn-green" id="resolveSendEmail">Send Email &amp; Resolve</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Toast -->
-    <div class="toast" id="toast"></div>
+    <!-- confirm dialog -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm">
+            <p id="confirmMessage"></p>
+            <div class="sheet-actions">
+                <button class="btn" id="confirmCancel">Cancel</button>
+                <button class="btn btn-primary" id="confirmOk">Confirm</button>
+            </div>
+        </div>
+    </div>
 
-    <!-- Result banner (resolve progress / success / error) -->
+    <div class="toast" id="toast"></div>
     <div class="result-banner" id="resultBanner">
         <span id="resultBannerText"></span>
         <button id="resultBannerClose" title="Dismiss">&times;</button>
     </div>
 
     <script>
-        // --- Data from server ---
+        // ===== Data from server =====
         const TICKET = {{ ticket | tojson }};
         const NOTES = {{ notes | tojson }};
         const MODELS = {{ models | tojson }};
@@ -1045,320 +555,232 @@
         const CURRENT_MEMBER = {{ current_member | tojson }};
         const BOARD_OPTIONS = {{ board_options | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
-
-        // Extract token from URL so we can pass it on API calls
+        const SCREENCONNECT_ENABLED = {{ screenconnect_enabled | tojson }};
+        const LIVE_ACTIVE = {{ live_active | tojson }};
         const POD_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
 
-        // --- State ---
+        // ===== State =====
         let messages = [];
         let isStreaming = false;
         let hasNewMessages = false;
-        let pendingAttachments = [];  // {kind:'image', dataUrl, name} | {kind:'text', text, name}
-
-        // The tech the time/notes post as — so they're attributed to the real
-        // tech, not the API user. Defaults to whoever the ticket is assigned to
-        // (its owner), then the ticket's first resource, then a CW-supplied member
-        // or the tech's last choice. Always overridable in the Add Time dropdown.
-        const MEMBER_STORAGE_KEY = 'cw_pod_member';
-        function getStoredMember() {
-            try { return localStorage.getItem(MEMBER_STORAGE_KEY) || ''; } catch (e) { return ''; }
-        }
-        function setStoredMember(id) {
-            try { localStorage.setItem(MEMBER_STORAGE_KEY, id); } catch (e) {}
-        }
-        function memberInList(id) {
-            return !!id && MEMBERS.some(function(m) { return m.identifier === id; });
-        }
-        function pickDefaultMember() {
-            // The ticket's assigned tech (owner) wins.
-            if (memberInList(TICKET.owner_identifier)) return TICKET.owner_identifier;
-            // Otherwise the first listed resource on the ticket.
-            if (TICKET.resources) {
-                const first = String(TICKET.resources).split(',')[0].trim();
-                if (memberInList(first)) return first;
-            }
-            // Fall back to a CW-supplied member or the tech's last choice.
-            if (memberInList(CURRENT_MEMBER)) return CURRENT_MEMBER;
-            if (memberInList(getStoredMember())) return getStoredMember();
-            return '';
-        }
-        let selectedMember = pickDefaultMember();
-        function memberName(id) {
-            const m = MEMBERS.find(function(x) { return x.identifier === id; });
-            return m ? m.name : id;
-        }
+        let pendingAttachments = [];
 
         const MAX_IMAGES_PER_MESSAGE = 4;
-        const MAX_TEXT_FILE_BYTES = 51200;  // 50KB
-        const IMAGE_MAX_DIMENSION = 1568;   // long-edge cap before sending
-        const IMAGE_KEEP_ORIGINAL_BYTES = 409600;  // small images skip re-encoding
+        const MAX_TEXT_FILE_BYTES = 51200;
+        const IMAGE_MAX_DIMENSION = 1568;
+        const IMAGE_KEEP_ORIGINAL_BYTES = 409600;
 
-        // --- Elements ---
-        const chatArea = document.getElementById('chatArea');
-        const chatInput = document.getElementById('chatInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const saveBtn = document.getElementById('saveBtn');
-        const resolveBtn = document.getElementById('resolveBtn');
-        const clearBtn = document.getElementById('clearBtn');
-        const modelSelect = document.getElementById('modelSelect');
-        const contextBar = document.getElementById('contextBar');
-        const contextDetails = document.getElementById('contextDetails');
-        const dialogOverlay = document.getElementById('dialogOverlay');
-        const dialogMessage = document.getElementById('dialogMessage');
-        const dialogCancel = document.getElementById('dialogCancel');
-        const dialogConfirm = document.getElementById('dialogConfirm');
-        const toast = document.getElementById('toast');
-        const timeModalOverlay = document.getElementById('timeModalOverlay');
-        const addTimeBtn = document.getElementById('addTimeBtn');
-        const timeMember = document.getElementById('timeMember');
-        const timeDate = document.getElementById('timeDate');
-        const timeStartInput = document.getElementById('timeStartInput');
-        const timeEndInput = document.getElementById('timeEndInput');
-        const timeNote = document.getElementById('timeNote');
-        const timeDuration = document.getElementById('timeDuration');
-        const timeCancel = document.getElementById('timeCancel');
-        const timeSkipBtn = document.getElementById('timeSkip');
-        const timeSubmitBtn = document.getElementById('timeSubmit');
-        const timeModalTitle = document.getElementById('timeModalTitle');
-        const timeModalHint = document.getElementById('timeModalHint');
-        const resolveModalOverlay = document.getElementById('resolveModalOverlay');
-        const resolveStatus = document.getElementById('resolveStatus');
-        const emailSection = document.getElementById('emailSection');
-        const emailPreview = document.getElementById('emailPreview');
-        const categorySection = document.getElementById('categorySection');
-        const resType = document.getElementById('resType');
-        const resSubtype = document.getElementById('resSubtype');
-        const resItem = document.getElementById('resItem');
-        const resultBanner = document.getElementById('resultBanner');
-        const resultBannerText = document.getElementById('resultBannerText');
-        const resultBannerClose = document.getElementById('resultBannerClose');
-        const attachBtn = document.getElementById('attachBtn');
-        const fileInput = document.getElementById('fileInput');
-        const attachmentStrip = document.getElementById('attachmentStrip');
+        // ===== Member / identity resolution =====
+        // "Who is chatting" is auto-resolved — no picker. Prefer the logged-in
+        // tech CW passed (?member=), then the assigned tech (ticket owner), then
+        // the first resource on the ticket, then a remembered choice.
+        const MEMBER_STORAGE_KEY = 'cw_pod_member';
+        function getStoredMember(){ try { return localStorage.getItem(MEMBER_STORAGE_KEY) || ''; } catch(e){ return ''; } }
+        function setStoredMember(id){ try { localStorage.setItem(MEMBER_STORAGE_KEY, id); } catch(e){} }
+        function memberInList(id){ return !!id && MEMBERS.some(function(m){ return m.identifier === id; }); }
+        function memberName(id){ const m = MEMBERS.find(function(x){ return x.identifier === id; }); return m ? m.name : id; }
 
-        // --- Helpers ---
-        function ticketUrl(ticketId) {
+        let identitySource = 'default';
+        function resolveIdentity(){
+            if (memberInList(CURRENT_MEMBER)) { identitySource = 'Signed-in technician'; return CURRENT_MEMBER; }
+            if (memberInList(TICKET.owner_identifier)) { identitySource = 'Assigned technician'; return TICKET.owner_identifier; }
+            if (TICKET.resources) {
+                const first = String(TICKET.resources).split(',')[0].trim();
+                if (memberInList(first)) { identitySource = 'Ticket resource'; return first; }
+            }
+            if (memberInList(getStoredMember())) { identitySource = 'Last used'; return getStoredMember(); }
+            identitySource = CURRENT_MEMBER ? 'Signed-in technician' : (TICKET.owner_identifier ? 'Assigned technician' : 'Unknown');
+            return CURRENT_MEMBER || TICKET.owner_identifier || '';
+        }
+        const LIVE_IDENTITY = resolveIdentity();
+        function liveMember(){ return LIVE_IDENTITY || ''; }
+        function liveAuthorName(){
+            const id = liveMember();
+            if (id && id === TICKET.owner_identifier && TICKET.owner_name) return TICKET.owner_name;
+            return memberName(id) || TICKET.owner_name || 'Technician';
+        }
+        // Time/notes attribution — defaults to the resolved identity, still
+        // overridable in the Add Time technician picker.
+        let selectedMember = LIVE_IDENTITY || (memberInList(getStoredMember()) ? getStoredMember() : '');
+
+        // ===== Elements =====
+        const $ = function(id){ return document.getElementById(id); };
+        const aiThread = $('aiThread'), liveThread = $('liveThread');
+        const chatInput = $('chatInput'), sendBtn = $('sendBtn'), composer = $('composer');
+        const saveBtn = $('saveBtn'), resolveBtn = $('resolveBtn'), addTimeBtn = $('addTimeBtn'), clearBtn = $('clearBtn');
+        const modelSelect = $('modelSelect'), modeText = $('modeText');
+        const contextCard = $('contextCard');
+        const aiTab = $('aiTab'), liveTab = $('liveTab');
+        const attachBtn = $('attachBtn'), fileInput = $('fileInput'), attachStrip = $('attachStrip');
+        const toast = $('toast'), resultBanner = $('resultBanner'), resultBannerText = $('resultBannerText'), resultBannerClose = $('resultBannerClose');
+        const overlay = $('overlay');
+        const topTitle = $('topTitle'), topSub = $('topSub');
+        // sheets
+        const timeSheet = $('timeSheet'), timeSheetTitle = $('timeSheetTitle'), timeHint = $('timeHint');
+        const timeMember = $('timeMember'), timeDate = $('timeDate'), timeStartInput = $('timeStartInput'), timeEndInput = $('timeEndInput'), timeDuration = $('timeDuration'), timeNote = $('timeNote');
+        const timeCancel = $('timeCancel'), timeSkipBtn = $('timeSkip'), timeSubmitBtn = $('timeSubmit'), timeClose = $('timeClose');
+        const resolveSheet = $('resolveSheet'), resolveStatus = $('resolveStatus'), resolveClose = $('resolveClose');
+        const categorySection = $('categorySection'), resType = $('resType'), resSubtype = $('resSubtype'), resItem = $('resItem');
+        const emailSection = $('emailSection'), emailPreview = $('emailPreview');
+        const resolveSkipEmailBtn = $('resolveSkipEmail'), resolveSendEmailBtn = $('resolveSendEmail');
+        // confirm
+        const confirmOverlay = $('confirmOverlay'), confirmMessage = $('confirmMessage'), confirmCancel = $('confirmCancel'), confirmOk = $('confirmOk');
+
+        const ticketRef = '#' + TICKET.id + (TICKET.company_name ? ' · ' + TICKET.company_name : '');
+
+        // ===== Helpers =====
+        function ticketUrl(ticketId){
             return CW_MANAGE_URL + '/v4_6_release/services/system_io/Service/fv_sr100_request.rails?service_recid=' + ticketId + '&companyName=ntm';
         }
+        function scrollThread(el){ el.scrollTop = el.scrollHeight; }
+        function escapeHtml(text){ const d = document.createElement('div'); d.textContent = text == null ? '' : text; return d.innerHTML; }
+        // Set an action button's icon + trailing label (icon names / labels are static, not user input).
+        function setActContent(btn, icon, text){ btn.innerHTML = '<span class="i">' + icon + '</span>' + text; }
 
-        // --- Context Bar Toggle ---
-        contextBar.addEventListener('click', () => {
-            contextDetails.classList.toggle('expanded');
-        });
-
-        // --- Markdown Renderer ---
-        function renderMarkdown(text) {
+        function renderMarkdown(text){
             const codeBlocks = [];
-            text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+            text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code){
                 const idx = codeBlocks.length;
                 codeBlocks.push('<pre><code>' + escapeHtml(code.trim()) + '</code></pre>');
                 return '%%CODEBLOCK_' + idx + '%%';
             });
             text = escapeHtml(text);
-            codeBlocks.forEach((block, idx) => {
-                text = text.replace('%%CODEBLOCK_' + idx + '%%', block);
-            });
-            text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
-            text = text.replace(/\*\*(.+?)\*\*/g, (_, bold) => '<strong>' + bold + '</strong>');
-            text = text.replace(/^[\-\*] (.+)$/gm, (_, item) => '<li>' + item + '</li>');
+            codeBlocks.forEach(function(block, idx){ text = text.replace('%%CODEBLOCK_' + idx + '%%', block); });
+            text = text.replace(/`([^`]+)`/g, function(_, code){ return '<code>' + code + '</code>'; });
+            text = text.replace(/\*\*(.+?)\*\*/g, function(_, bold){ return '<strong>' + bold + '</strong>'; });
+            text = text.replace(/^[\-\*] (.+)$/gm, function(_, item){ return '<li>' + item + '</li>'; });
             text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-            text = text.replace(/^\d+\. (.+)$/gm, (_, item) => '<li>' + item + '</li>');
-            // Linkify ticket references like #12345
-            text = text.replace(/#(\d{4,})/g, (match, id) => {
-                return '<a href="' + ticketUrl(id) + '" target="_blank" rel="noopener">#' + id + '</a>';
-            });
+            text = text.replace(/^\d+\. (.+)$/gm, function(_, item){ return '<li>' + item + '</li>'; });
+            text = text.replace(/#(\d{4,})/g, function(match, id){ return '<a href="' + ticketUrl(id) + '" target="_blank" rel="noopener">#' + id + '</a>'; });
             text = text.replace(/\n\n/g, '</p><p>');
             text = text.replace(/\n/g, '<br>');
             return '<p>' + text + '</p>';
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
+        // ===== AI thread rendering =====
+        function clearWelcome(el){ const w = el.querySelector('.welcome'); if (w) w.remove(); }
 
-        // --- Chat Functions ---
-        function addMessage(role, content, isError) {
+        function addMessage(role, content, isError){
             isError = isError || false;
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
-
-            const div = document.createElement('div');
-            div.className = 'message message-' + role;
-
-            const label = document.createElement('div');
-            label.className = 'message-label';
-            label.textContent = role === 'user' ? 'You' : 'AI';
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content' + (isError ? ' message-error' : '');
+            clearWelcome(aiThread);
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (role === 'user' ? 'out' : 'in');
+            const name = document.createElement('div');
+            name.className = 'msg-name';
+            name.textContent = role === 'user' ? 'You' : 'Hercules';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble ' + (role === 'user' ? 'bubble-user' : 'bubble-ai') + (isError ? ' err' : '');
 
             if (Array.isArray(content)) {
-                content.forEach(function(part) {
+                content.forEach(function(part){
                     if (part.type === 'text' && part.text) {
                         const span = document.createElement('span');
                         span.style.whiteSpace = 'pre-wrap';
                         span.textContent = part.text;
-                        contentDiv.appendChild(span);
+                        bubble.appendChild(span);
                     } else if (part.type === 'image_url') {
                         const img = document.createElement('img');
-                        img.className = 'message-image';
+                        img.className = 'msg-image';
                         img.src = part.image_url.url;
-                        img.addEventListener('click', function() {
-                            img.classList.toggle('expanded');
-                            chatArea.scrollTop = chatArea.scrollHeight;
-                        });
-                        contentDiv.appendChild(img);
+                        img.addEventListener('click', function(){ img.classList.toggle('expanded'); scrollThread(aiThread); });
+                        bubble.appendChild(img);
                     }
                 });
             } else {
-                contentDiv.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
+                bubble.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
             }
-
-            div.appendChild(label);
-            div.appendChild(contentDiv);
-            chatArea.appendChild(div);
-            chatArea.scrollTop = chatArea.scrollHeight;
-
-            return contentDiv;
+            row.appendChild(name); row.appendChild(bubble);
+            aiThread.appendChild(row);
+            scrollThread(aiThread);
+            return bubble;
         }
 
-        function createStreamingMessage() {
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
-
-            const div = document.createElement('div');
-            div.className = 'message message-assistant';
-
-            const label = document.createElement('div');
-            label.className = 'message-label';
-            label.textContent = 'AI';
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.innerHTML = '<span class="typing-indicator">Thinking...</span>';
-
-            div.appendChild(label);
-            div.appendChild(contentDiv);
-            chatArea.appendChild(div);
-            chatArea.scrollTop = chatArea.scrollHeight;
-
-            return contentDiv;
+        function createStreamingMessage(){
+            clearWelcome(aiThread);
+            const row = document.createElement('div');
+            row.className = 'msg-row in';
+            const name = document.createElement('div');
+            name.className = 'msg-name';
+            name.textContent = 'Hercules';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble bubble-ai';
+            bubble.innerHTML = '<span class="typing-dots" style="color:var(--muted)"><span></span><span></span><span></span></span>';
+            row.appendChild(name); row.appendChild(bubble);
+            aiThread.appendChild(row);
+            scrollThread(aiThread);
+            return bubble;
         }
 
-        // --- Similar Tickets Panel ---
-        function renderSimilarTickets() {
+        function renderSimilarTickets(){
             if (!DUPLICATES || DUPLICATES.length === 0) return;
-
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
-
+            clearWelcome(aiThread);
             const panel = document.createElement('div');
-            panel.className = 'similar-tickets';
-
+            panel.className = 'related';
             const tier = DUPLICATES[0].search_tier || 'related';
             const tierLabels = {
-                contact: 'Previous tickets from this contact',
-                company: 'Similar tickets from this company',
-                all: 'Similar tickets across all companies',
+                contact: 'Previous · this contact',
+                company: 'Related · ' + (TICKET.company_name || 'company'),
+                all: 'Similar tickets',
             };
             const title = document.createElement('div');
-            title.className = 'similar-tickets-title';
-            title.textContent = tierLabels[tier] || 'Related Tickets';
+            title.className = 'related-title';
+            title.textContent = tierLabels[tier] || 'Related tickets';
             panel.appendChild(title);
-
-            DUPLICATES.forEach(function(d) {
+            DUPLICATES.forEach(function(d){
                 const item = document.createElement('div');
-                item.className = 'similar-ticket-item';
-
+                item.className = 'related-item';
                 const link = document.createElement('a');
-                link.className = 'similar-ticket-link';
-                link.href = ticketUrl(d.id);
-                link.target = '_blank';
-                link.rel = 'noopener';
+                link.className = 'num';
+                link.href = ticketUrl(d.id); link.target = '_blank'; link.rel = 'noopener';
                 link.textContent = '#' + d.id;
-
-                const summary = document.createElement('span');
-                summary.className = 'similar-ticket-summary';
-                summary.textContent = d.summary;
-
-                const status = document.createElement('span');
-                status.className = 'similar-ticket-status';
-                status.textContent = d.status;
-
-                item.appendChild(link);
-                item.appendChild(summary);
-                item.appendChild(status);
+                const sum = document.createElement('span'); sum.className = 'sum'; sum.textContent = d.summary;
+                const st = document.createElement('span'); st.className = 'st'; st.textContent = d.status;
+                item.appendChild(link); item.appendChild(sum); item.appendChild(st);
                 panel.appendChild(item);
             });
-
-            chatArea.appendChild(panel);
+            aiThread.appendChild(panel);
         }
-
         renderSimilarTickets();
 
-        // --- Load Saved Messages ---
+        // Load saved AI messages
         if (SAVED_MESSAGES && SAVED_MESSAGES.length > 0) {
-            SAVED_MESSAGES.forEach(function(m) {
-                messages.push({ role: m.role, content: m.content });
-                addMessage(m.role, m.content);
-            });
+            SAVED_MESSAGES.forEach(function(m){ messages.push({ role: m.role, content: m.content }); addMessage(m.role, m.content); });
             hasNewMessages = true;
             saveBtn.disabled = false;
-            resolveBtn.disabled = false;
         }
 
-        // --- Attachments ---
-        function renderAttachmentStrip() {
-            attachmentStrip.innerHTML = '';
-            attachmentStrip.classList.toggle('has-items', pendingAttachments.length > 0);
-
-            pendingAttachments.forEach(function(att, idx) {
+        // ===== Attachments =====
+        function renderAttachmentStrip(){
+            attachStrip.innerHTML = '';
+            attachStrip.classList.toggle('has-items', pendingAttachments.length > 0);
+            pendingAttachments.forEach(function(att, idx){
                 const thumb = document.createElement('div');
-                thumb.className = 'attachment-thumb';
+                thumb.className = 'attach-thumb';
                 thumb.title = att.name;
-
                 if (att.kind === 'image') {
-                    const img = document.createElement('img');
-                    img.src = att.dataUrl;
-                    thumb.appendChild(img);
+                    const img = document.createElement('img'); img.src = att.dataUrl; thumb.appendChild(img);
                 } else {
-                    const label = document.createElement('div');
-                    label.className = 'file-label';
-                    label.textContent = att.name;
-                    thumb.appendChild(label);
+                    const label = document.createElement('div'); label.className = 'file-label'; label.textContent = att.name; thumb.appendChild(label);
                 }
-
                 const remove = document.createElement('button');
-                remove.className = 'attachment-remove';
-                remove.innerHTML = '&times;';
-                remove.title = 'Remove';
-                remove.addEventListener('click', function() {
-                    pendingAttachments.splice(idx, 1);
-                    renderAttachmentStrip();
-                });
+                remove.className = 'attach-remove'; remove.innerHTML = '&times;'; remove.title = 'Remove';
+                remove.addEventListener('click', function(){ pendingAttachments.splice(idx, 1); renderAttachmentStrip(); });
                 thumb.appendChild(remove);
-
-                attachmentStrip.appendChild(thumb);
+                attachStrip.appendChild(thumb);
             });
         }
 
-        // Downscale large images so the request stays small and within model limits
-        function imageToDataUrl(file) {
-            return new Promise(function(resolve, reject) {
+        function imageToDataUrl(file){
+            return new Promise(function(resolve, reject){
                 const reader = new FileReader();
-                reader.onerror = function() { reject(new Error('read failed')); };
-                reader.onload = function() {
+                reader.onerror = function(){ reject(new Error('read failed')); };
+                reader.onload = function(){
                     const original = reader.result;
                     const img = new Image();
-                    img.onerror = function() { reject(new Error('decode failed')); };
-                    img.onload = function() {
+                    img.onerror = function(){ reject(new Error('decode failed')); };
+                    img.onload = function(){
                         const longEdge = Math.max(img.width, img.height);
-                        if (file.size <= IMAGE_KEEP_ORIGINAL_BYTES && longEdge <= IMAGE_MAX_DIMENSION) {
-                            resolve(original);
-                            return;
-                        }
+                        if (file.size <= IMAGE_KEEP_ORIGINAL_BYTES && longEdge <= IMAGE_MAX_DIMENSION) { resolve(original); return; }
                         const scale = Math.min(1, IMAGE_MAX_DIMENSION / longEdge);
                         const canvas = document.createElement('canvas');
                         canvas.width = Math.round(img.width * scale);
@@ -1371,105 +793,64 @@
                 reader.readAsDataURL(file);
             });
         }
-
-        function readTextFile(file) {
-            return new Promise(function(resolve, reject) {
+        function readTextFile(file){
+            return new Promise(function(resolve, reject){
                 const reader = new FileReader();
-                reader.onerror = function() { reject(new Error('read failed')); };
-                reader.onload = function() { resolve(reader.result); };
+                reader.onerror = function(){ reject(new Error('read failed')); };
+                reader.onload = function(){ resolve(reader.result); };
                 reader.readAsText(file.slice(0, MAX_TEXT_FILE_BYTES));
             });
         }
-
-        async function addFiles(files) {
+        async function addFiles(files){
+            // Attachments feed the AI assistant, not the live customer channel.
+            if (liveMode) { showToast('Attachments go to the AI assistant — switch to Assistant to attach', 'error'); return; }
             for (const file of files) {
                 if (file.type.startsWith('image/')) {
-                    const imageCount = pendingAttachments.filter(function(a) { return a.kind === 'image'; }).length;
-                    if (imageCount >= MAX_IMAGES_PER_MESSAGE) {
-                        showToast('Max ' + MAX_IMAGES_PER_MESSAGE + ' images per message', 'error');
-                        continue;
-                    }
+                    const imageCount = pendingAttachments.filter(function(a){ return a.kind === 'image'; }).length;
+                    if (imageCount >= MAX_IMAGES_PER_MESSAGE) { showToast('Max ' + MAX_IMAGES_PER_MESSAGE + ' images per message', 'error'); continue; }
                     try {
                         const dataUrl = await imageToDataUrl(file);
                         pendingAttachments.push({ kind: 'image', dataUrl: dataUrl, name: file.name || 'screenshot.png' });
-                    } catch (e) {
-                        showToast('Could not read image: ' + (file.name || 'pasted image'), 'error');
-                    }
+                    } catch (e) { showToast('Could not read image: ' + (file.name || 'pasted image'), 'error'); }
                 } else if (/\.(txt|log|csv)$/i.test(file.name) || file.type.startsWith('text/')) {
                     try {
                         let text = await readTextFile(file);
                         if (file.size > MAX_TEXT_FILE_BYTES) text += '\n[... file truncated at 50KB]';
                         pendingAttachments.push({ kind: 'text', text: text, name: file.name });
-                    } catch (e) {
-                        showToast('Could not read file: ' + file.name, 'error');
-                    }
-                } else {
-                    showToast('Unsupported file type: ' + (file.name || file.type), 'error');
-                }
+                    } catch (e) { showToast('Could not read file: ' + file.name, 'error'); }
+                } else { showToast('Unsupported file type: ' + (file.name || file.type), 'error'); }
             }
             renderAttachmentStrip();
         }
-
-        attachBtn.addEventListener('click', function() { fileInput.click(); });
-
-        fileInput.addEventListener('change', function() {
-            addFiles(Array.from(fileInput.files));
-            fileInput.value = '';
-        });
-
-        // Paste screenshots straight into the chat
-        document.addEventListener('paste', function(e) {
+        attachBtn.addEventListener('click', function(){ fileInput.click(); });
+        fileInput.addEventListener('change', function(){ addFiles(Array.from(fileInput.files)); fileInput.value = ''; });
+        document.addEventListener('paste', function(e){
             const items = Array.from(e.clipboardData ? e.clipboardData.items : []);
-            const files = items
-                .filter(function(i) { return i.kind === 'file'; })
-                .map(function(i) { return i.getAsFile(); })
-                .filter(Boolean);
-            if (files.length > 0) {
-                e.preventDefault();
-                addFiles(files);
-            }
+            const files = items.filter(function(i){ return i.kind === 'file'; }).map(function(i){ return i.getAsFile(); }).filter(Boolean);
+            if (files.length > 0) { e.preventDefault(); addFiles(files); }
+        });
+        document.addEventListener('dragover', function(e){ e.preventDefault(); document.body.classList.add('drag-over'); });
+        document.addEventListener('dragleave', function(e){ if (!e.relatedTarget) document.body.classList.remove('drag-over'); });
+        document.addEventListener('drop', function(e){
+            e.preventDefault(); document.body.classList.remove('drag-over');
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) addFiles(Array.from(e.dataTransfer.files));
         });
 
-        // Drag & drop anywhere in the pod
-        document.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            document.body.classList.add('drag-over');
-        });
-        document.addEventListener('dragleave', function(e) {
-            if (!e.relatedTarget) document.body.classList.remove('drag-over');
-        });
-        document.addEventListener('drop', function(e) {
-            e.preventDefault();
-            document.body.classList.remove('drag-over');
-            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
-                addFiles(Array.from(e.dataTransfer.files));
-            }
-        });
-
-        // --- Send Message ---
-        async function sendMessage() {
+        // ===== Send (AI) =====
+        async function sendMessage(){
             const text = chatInput.value.trim();
             if (liveMode) { sendLiveMessage(text); return; }
             if ((!text && pendingAttachments.length === 0) || isStreaming) return;
 
-            // Build message content: plain string normally, OpenAI-style
-            // content parts when attachments are present
             let userContent = text;
             if (pendingAttachments.length > 0) {
                 let fullText = text;
-                pendingAttachments.forEach(function(att) {
-                    if (att.kind === 'text') {
-                        fullText += (fullText ? '\n\n' : '') + '[Attached file: ' + att.name + ']\n```\n' + att.text + '\n```';
-                    }
+                pendingAttachments.forEach(function(att){
+                    if (att.kind === 'text') fullText += (fullText ? '\n\n' : '') + '[Attached file: ' + att.name + ']\n```\n' + att.text + '\n```';
                 });
-
                 const parts = [];
                 if (fullText) parts.push({ type: 'text', text: fullText });
-                pendingAttachments.forEach(function(att) {
-                    if (att.kind === 'image') {
-                        parts.push({ type: 'image_url', image_url: { url: att.dataUrl } });
-                    }
-                });
+                pendingAttachments.forEach(function(att){ if (att.kind === 'image') parts.push({ type: 'image_url', image_url: { url: att.dataUrl } }); });
                 userContent = parts;
             }
 
@@ -1483,7 +864,7 @@
             messages.push({ role: 'user', content: userContent });
             addMessage('user', userContent);
 
-            const contentDiv = createStreamingMessage();
+            const bubble = createStreamingMessage();
             let fullContent = '';
             let started = false;
 
@@ -1498,71 +879,50 @@
                         ticket_context: Object.assign({}, TICKET, { notes: NOTES, duplicates: DUPLICATES }),
                     }),
                 });
-
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
-
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
                     buffer = lines.pop();
-
                     for (const line of lines) {
                         if (!line.startsWith('data: ')) continue;
                         const data = line.slice(6).trim();
                         if (!data) continue;
-
                         try {
                             const parsed = JSON.parse(data);
-
-                            if (parsed.error) {
-                                contentDiv.innerHTML = '<span class="message-error">' + escapeHtml(parsed.error) + '</span>';
-                                break;
-                            }
-
+                            if (parsed.error) { bubble.className = 'bubble bubble-ai err'; bubble.textContent = parsed.error; break; }
                             if (parsed.done) break;
-
                             if (parsed.content) {
-                                if (!started) {
-                                    contentDiv.innerHTML = '';
-                                    started = true;
-                                }
+                                if (!started) { bubble.innerHTML = ''; started = true; }
                                 fullContent += parsed.content;
-                                contentDiv.innerHTML = renderMarkdown(fullContent);
-                                chatArea.scrollTop = chatArea.scrollHeight;
+                                bubble.innerHTML = renderMarkdown(fullContent);
+                                scrollThread(aiThread);
                             }
                         } catch (e) {}
                     }
                 }
-
                 if (fullContent) {
                     messages.push({ role: 'assistant', content: fullContent });
                     hasNewMessages = true;
                     saveBtn.disabled = false;
-                    resolveBtn.disabled = false;
-
-                    // Persist the exchange to DB (fire and forget)
+                    setActContent(saveBtn, 'bookmark_add', 'Save');
                     fetch('/messages/save', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
                         body: JSON.stringify({
                             ticket_id: TICKET.id,
-                            messages: [
-                                { role: 'user', content: userContent },
-                                { role: 'assistant', content: fullContent },
-                            ],
+                            messages: [ { role: 'user', content: userContent }, { role: 'assistant', content: fullContent } ],
                         }),
-                    }).catch(function() {});
-                } else if (!contentDiv.querySelector('.message-error')) {
-                    contentDiv.innerHTML = '<span class="message-error">[Response interrupted]</span>';
+                    }).catch(function(){});
+                } else if (!bubble.classList.contains('err')) {
+                    bubble.className = 'bubble bubble-ai err'; bubble.textContent = '[Response interrupted]';
                 }
-
             } catch (err) {
-                contentDiv.innerHTML = '<span class="message-error">Connection error &mdash; try again</span>';
+                bubble.className = 'bubble bubble-ai err'; bubble.textContent = 'Connection error — try again';
             }
 
             isStreaming = false;
@@ -1570,356 +930,350 @@
             chatInput.focus();
         }
 
-        // --- Save to Ticket ---
-        let dialogResolve = null;
-
-        function showDialog(message) {
-            return new Promise(function(resolve) {
-                dialogMessage.textContent = message;
-                dialogOverlay.classList.add('show');
-                dialogResolve = resolve;
+        // ===== Confirm dialog =====
+        let confirmResolve = null;
+        function showConfirm(message){
+            return new Promise(function(resolve){
+                confirmMessage.textContent = message;
+                confirmOverlay.classList.add('show');
+                confirmResolve = resolve;
             });
         }
+        confirmCancel.addEventListener('click', function(){ confirmOverlay.classList.remove('show'); if (confirmResolve) confirmResolve(false); });
+        confirmOk.addEventListener('click', function(){ confirmOverlay.classList.remove('show'); if (confirmResolve) confirmResolve(true); });
 
-        dialogCancel.addEventListener('click', function() {
-            dialogOverlay.classList.remove('show');
-            if (dialogResolve) dialogResolve(false);
-        });
-
-        dialogConfirm.addEventListener('click', function() {
-            dialogOverlay.classList.remove('show');
-            if (dialogResolve) dialogResolve(true);
-        });
-
-        function showToast(message, type) {
+        function showToast(message, type){
             type = type || 'success';
             toast.textContent = message;
             toast.className = 'toast toast-' + type + ' show';
-            setTimeout(function() { toast.classList.remove('show'); }, 3000);
+            setTimeout(function(){ toast.classList.remove('show'); }, 3000);
         }
-
-        // Persistent banner for the resolve background job. 'info' and 'error'
-        // stay until replaced/dismissed; 'success' auto-clears.
         let bannerTimer = null;
-        function showBanner(message, type) {
+        function showBanner(message, type){
             clearTimeout(bannerTimer);
             resultBannerText.textContent = message;
             resultBanner.className = 'result-banner show ' + (type || 'info');
-            if (type === 'success') {
-                bannerTimer = setTimeout(hideBanner, 7000);
-            }
+            if (type === 'success') bannerTimer = setTimeout(hideBanner, 7000);
         }
-        function hideBanner() {
-            resultBanner.className = 'result-banner';
-        }
+        function hideBanner(){ resultBanner.className = 'result-banner'; }
         resultBannerClose.addEventListener('click', hideBanner);
 
-        // --- Time Modal ---
-        // Populate the technician picker (active full-license members) and
-        // preselect whoever the pod is acting as.
-        function populateMemberPicker() {
-            timeMember.innerHTML = '';
-            if (!MEMBERS || MEMBERS.length === 0) {
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'No technicians available';
-                timeMember.appendChild(opt);
-                return;
-            }
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = 'Select technician...';
-            timeMember.appendChild(placeholder);
-            MEMBERS.forEach(function(m) {
-                const opt = document.createElement('option');
-                opt.value = m.identifier;
-                opt.textContent = m.name;
-                timeMember.appendChild(opt);
+        // ===== Views / navigation =====
+        const VIEW_TITLES = {
+            chat:     ['Hercules', 'Ticket console'],
+            notes:    ['Ticket notes', ticketRef],
+            history:  ['History', ticketRef],
+            settings: ['Settings', 'Preferences'],
+        };
+        let currentView = 'chat';
+        function setView(view){
+            currentView = view;
+            ['chat','notes','history','settings'].forEach(function(v){
+                $('view-' + v).classList.toggle('active', v === view);
+                $('nav-' + v).classList.toggle('active', v === view);
             });
-            if (selectedMember && MEMBERS.some(function(m) { return m.identifier === selectedMember; })) {
-                timeMember.value = selectedMember;
+            topTitle.textContent = VIEW_TITLES[view][0];
+            topSub.textContent = VIEW_TITLES[view][1];
+        }
+        $('nav-chat').addEventListener('click', function(){ setView('chat'); });
+        $('nav-notes').addEventListener('click', function(){ setView('notes'); });
+        $('nav-history').addEventListener('click', function(){ setView('history'); });
+        $('nav-settings').addEventListener('click', function(){ setView('settings'); });
+        contextCard.addEventListener('click', function(){ setView('notes'); });
+
+        // Rail collapse (persisted; auto-collapse on a narrow pod)
+        const RAIL_KEY = 'cw_pod_rail';
+        function applyRail(collapsed){ document.body.classList.toggle('rail-collapsed', collapsed); }
+        (function initRail(){
+            let stored = null;
+            try { stored = localStorage.getItem(RAIL_KEY); } catch(e){}
+            const collapsed = stored === null ? (window.innerWidth < 460) : (stored === '1');
+            applyRail(collapsed);
+        })();
+        $('railCollapse').addEventListener('click', function(){
+            const collapsed = !document.body.classList.contains('rail-collapsed');
+            applyRail(collapsed);
+            try { localStorage.setItem(RAIL_KEY, collapsed ? '1' : '0'); } catch(e){}
+        });
+
+        // ===== Notes / History / Settings content =====
+        function shortDate(iso){
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d)) return String(iso).slice(0, 16).replace('T', ' ');
+            return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+        (function renderNotes(){
+            const list = $('notesList');
+            if (!NOTES || NOTES.length === 0) { list.innerHTML = '<div class="empty-hint">No ticket notes yet.</div>'; return; }
+            NOTES.slice(0, 40).forEach(function(n){
+                const card = document.createElement('div'); card.className = 'note-card';
+                const head = document.createElement('div'); head.className = 'note-head';
+                const left = document.createElement('div'); left.style.display = 'flex'; left.style.alignItems = 'center'; left.style.gap = '7px';
+                const who = document.createElement('span'); who.className = 'note-who'; who.textContent = n.member || 'Unknown';
+                const flag = document.createElement('span'); flag.className = 'note-flag ' + (n.internal ? 'internal' : 'external'); flag.textContent = n.internal ? 'Internal' : 'External';
+                left.appendChild(who); left.appendChild(flag);
+                const when = document.createElement('span'); when.className = 'note-when'; when.textContent = shortDate(n.date);
+                head.appendChild(left); head.appendChild(when);
+                const body = document.createElement('div'); body.className = 'note-body'; body.textContent = (n.text || '').slice(0, 1200);
+                card.appendChild(head); card.appendChild(body);
+                list.appendChild(card);
+            });
+        })();
+        (function renderHistory(){
+            const list = $('historyList');
+            const events = (NOTES || []).slice().reverse();  // oldest first
+            if (LIVE_ACTIVE) events.push({ _synthetic: true, member: liveAuthorName(), date: null, text: 'Live chat in progress', live: true });
+            if (events.length === 0) { list.innerHTML = '<div class="empty-hint">No activity recorded yet.</div>'; return; }
+            events.forEach(function(ev, idx){
+                const item = document.createElement('div'); item.className = 'tl-item';
+                const rail = document.createElement('div'); rail.className = 'tl-rail';
+                const dot = document.createElement('span'); dot.className = 'tl-dot' + (ev.live ? ' live' : (idx === 0 ? ' accent' : ''));
+                rail.appendChild(dot);
+                if (idx < events.length - 1) { const line = document.createElement('span'); line.className = 'tl-line'; rail.appendChild(line); }
+                const body = document.createElement('div'); body.className = 'tl-body';
+                const title = document.createElement('div'); title.className = 'tl-title';
+                title.textContent = ev.live ? 'Live chat' : ((ev.internal ? 'Internal note' : 'Note') + ' · ' + (ev.member || 'Unknown'));
+                const sub = document.createElement('div'); sub.className = 'tl-sub';
+                sub.textContent = (ev.date ? shortDate(ev.date) + ' · ' : '') + (ev.text || '').slice(0, 120);
+                body.appendChild(title); body.appendChild(sub);
+                item.appendChild(rail); item.appendChild(body);
+                list.appendChild(item);
+            });
+        })();
+        (function renderSettings(){
+            $('setIdentity').textContent = liveAuthorName();
+            $('setIdentitySrc').textContent = identitySource;
+            $('setModel').textContent = (MODELS[0] && MODELS[0].label) || '—';
+        })();
+        modelSelect.addEventListener('change', function(){
+            const opt = modelSelect.options[modelSelect.selectedIndex];
+            if (opt) $('setModel').textContent = opt.textContent;
+        });
+
+        // ===== ScreenConnect =====
+        function scButtons(){ return Array.from(document.querySelectorAll('.js-sc')); }
+        async function launchScreenConnect(mode){
+            if (!SCREENCONNECT_ENABLED) { showToast('ScreenConnect is not configured', 'error'); return; }
+            const popup = window.open('about:blank', '_blank');
+            if (!popup) { showToast('Allow pop-ups to launch ScreenConnect', 'error'); return; }
+            popup.document.title = 'Opening ScreenConnect';
+            popup.document.body.textContent = 'Opening ScreenConnect...';
+            scButtons().forEach(function(b){ b.disabled = true; });
+            try {
+                const response = await fetch('/screenconnect/sessions?ticketId=' + encodeURIComponent(TICKET.id), { headers: { 'X-Pod-Token': POD_TOKEN } });
+                const data = await response.json().catch(function(){ return {}; });
+                if (!response.ok) throw new Error(data.detail || 'Could not find a ScreenConnect session');
+                const sessions = data.sessions || [];
+                let selected = sessions[0];
+                if (sessions.length > 1) {
+                    const choices = sessions.map(function(s, i){ return (i + 1) + '. ' + s.name + (s.online ? ' (online)' : ' (offline)'); }).join('\n');
+                    const answer = window.prompt('Choose a computer:\n' + choices, '1');
+                    const index = Number(answer) - 1;
+                    if (answer === null || !Number.isInteger(index) || !sessions[index]) { popup.close(); return; }
+                    selected = sessions[index];
+                }
+                popup.opener = null;
+                popup.location.href = mode === 'backstage' ? selected.backstage_url : selected.control_url;
+            } catch (error) {
+                popup.close();
+                showToast(error.message || 'Could not launch ScreenConnect', 'error');
+            } finally {
+                scButtons().forEach(function(b){ b.disabled = false; });
             }
         }
-        populateMemberPicker();
+        $('scBtn').addEventListener('click', function(){ launchScreenConnect('control'); });
+        $('scBackstageBtn').addEventListener('click', function(){ launchScreenConnect('backstage'); });
+        $('setScBtn').addEventListener('click', function(){ launchScreenConnect('control'); });
+        $('setScBackstageBtn').addEventListener('click', function(){ launchScreenConnect('backstage'); });
 
-        function pad2(n) { return String(n).padStart(2, '0'); }
+        // ===== Sheets =====
+        function anySheetOpen(){ return timeSheet.classList.contains('open') || resolveSheet.classList.contains('open'); }
+        function syncOverlay(){ overlay.classList.toggle('show', anySheetOpen()); }
+        function openTimeSheet(){ timeSheet.classList.add('open'); syncOverlay(); }
+        function closeTimeSheet(){ timeSheet.classList.remove('open'); syncOverlay(); }
+        function openResolveSheet(){ resolveSheet.classList.add('open'); syncOverlay(); }
+        function closeResolveSheet(){ resolveSheet.classList.remove('open'); syncOverlay(); }
+        overlay.addEventListener('click', function(){
+            if (timeSheet.classList.contains('open')) { closeTimeSheet(); if (timeMode === 'resolve') abortResolve(); }
+            if (resolveSheet.classList.contains('open')) { closeResolveSheet(); abortResolve(); }
+        });
 
-        // Build a local-time Date from the date + time fields. toISOString() then
-        // converts to UTC, so the tech enters their wall-clock times and CW gets
-        // correct UTC timestamps regardless of timezone.
-        function buildLocalDate(dateStr, timeStr) {
+        // ===== Time sheet =====
+        function populateMemberPicker(){
+            timeMember.innerHTML = '';
+            if (!MEMBERS || MEMBERS.length === 0) {
+                const opt = document.createElement('option'); opt.value = ''; opt.textContent = 'No technicians available'; timeMember.appendChild(opt); return;
+            }
+            const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Select technician…'; timeMember.appendChild(placeholder);
+            MEMBERS.forEach(function(m){ const opt = document.createElement('option'); opt.value = m.identifier; opt.textContent = m.name; timeMember.appendChild(opt); });
+            if (selectedMember && MEMBERS.some(function(m){ return m.identifier === selectedMember; })) timeMember.value = selectedMember;
+        }
+        function pad2(n){ return String(n).padStart(2, '0'); }
+        function buildLocalDate(dateStr, timeStr){
             const dp = dateStr.split('-').map(Number);
             const tp = timeStr.split(':').map(Number);
             return new Date(dp[0], dp[1] - 1, dp[2], tp[0], tp[1], 0, 0);
         }
-
-        function currentSpanHours() {
+        function currentSpanHours(){
             if (!timeDate.value || !timeStartInput.value || !timeEndInput.value) return null;
-            const start = buildLocalDate(timeDate.value, timeStartInput.value);
-            const end = buildLocalDate(timeDate.value, timeEndInput.value);
-            return (end - start) / 3600000;
+            return (buildLocalDate(timeDate.value, timeEndInput.value) - buildLocalDate(timeDate.value, timeStartInput.value)) / 3600000;
         }
-
-        function updateDuration() {
+        function updateDuration(){
             const span = currentSpanHours();
-            if (span === null) { timeDuration.textContent = 'Duration: —'; return; }
+            if (span === null) { timeDuration.textContent = 'Duration · —'; return; }
             if (span <= 0) { timeDuration.textContent = 'End must be after start'; return; }
-            timeDuration.textContent = 'Duration: ' + span.toFixed(2) + ' hr';
+            timeDuration.textContent = 'Duration · ' + span.toFixed(2) + ' hr';
         }
-
-        // 'add' = standalone Add Time button (posts immediately);
-        // 'resolve' = part of the resolve flow (carries time into finalize, allows Skip).
         let timeMode = 'add';
-
-        function openTimeModal(mode) {
-            timeMode = mode || 'add';
+        function openTimeModal(mode){
+            timeMode = (mode === 'resolve') ? 'resolve' : 'add';
             const now = new Date();
-            const start = new Date(now.getTime() - 30 * 60000);  // default to a 30-min block ending now
+            const start = new Date(now.getTime() - 30 * 60000);
             timeDate.value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
             timeStartInput.value = pad2(start.getHours()) + ':' + pad2(start.getMinutes());
             timeEndInput.value = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
             populateMemberPicker();
             updateDuration();
-
             if (timeMode === 'resolve') {
-                timeModalTitle.textContent = 'Log Time — Ticket #' + TICKET.id;
-                timeModalHint.style.display = 'block';
+                timeSheetTitle.textContent = 'Log Time · #' + TICKET.id;
+                timeHint.style.display = 'block';
                 timeNote.value = (resolveState && resolveState.internalNote) || '';
                 timeSkipBtn.style.display = '';
                 timeSubmitBtn.textContent = 'Add Time';
             } else {
-                timeModalTitle.textContent = 'Add Time — Ticket #' + TICKET.id;
-                timeModalHint.style.display = 'none';
+                timeSheetTitle.textContent = 'Add Time · #' + TICKET.id;
+                timeHint.style.display = 'none';
                 timeNote.value = '';
                 timeSkipBtn.style.display = 'none';
-                timeSubmitBtn.textContent = 'Save Time Entry';
+                timeSubmitBtn.textContent = 'Save Time';
             }
-            timeModalOverlay.classList.add('show');
+            openTimeSheet();
         }
-
-        timeMember.addEventListener('change', function() {
-            if (timeMember.value) { selectedMember = timeMember.value; setStoredMember(selectedMember); }
-        });
+        timeMember.addEventListener('change', function(){ if (timeMember.value) { selectedMember = timeMember.value; setStoredMember(selectedMember); } });
         timeDate.addEventListener('change', updateDuration);
         timeStartInput.addEventListener('change', updateDuration);
         timeEndInput.addEventListener('change', updateDuration);
-
-        timeCancel.addEventListener('click', function() {
-            timeModalOverlay.classList.remove('show');
-            if (timeMode === 'resolve') abortResolve();
-        });
-
-        // Skip Time (resolve flow only) — continue to the email step, no time logged.
-        // A technician isn't required to skip; attribution falls back to the ticket owner.
-        timeSkipBtn.addEventListener('click', function() {
+        function cancelTime(){ closeTimeSheet(); if (timeMode === 'resolve') abortResolve(); }
+        timeCancel.addEventListener('click', cancelTime);
+        timeClose.addEventListener('click', cancelTime);
+        timeSkipBtn.addEventListener('click', function(){
             const member = timeMember.value;
             if (member) { selectedMember = member; setStoredMember(member); }
             resolveState.member = member || selectedMember || '';
             resolveState.internalNote = timeNote.value.trim() || resolveState.internalNote;
-            resolveState.timeStart = null;
-            resolveState.timeEnd = null;
-            timeModalOverlay.classList.remove('show');
+            resolveState.timeStart = null; resolveState.timeEnd = null;
+            closeTimeSheet();
             openResolveEmailStep();
         });
-
-        timeSubmitBtn.addEventListener('click', async function() {
+        timeSubmitBtn.addEventListener('click', async function(){
             const member = timeMember.value;
             if (!member) { showToast('Select a technician', 'error'); return; }
             const span = currentSpanHours();
             if (span === null) { showToast('Enter date, start and end time', 'error'); return; }
             if (span <= 0) { showToast('End time must be after start time', 'error'); return; }
-
-            selectedMember = member;
-            setStoredMember(member);
-
+            selectedMember = member; setStoredMember(member);
             const startISO = buildLocalDate(timeDate.value, timeStartInput.value).toISOString();
             const endISO = buildLocalDate(timeDate.value, timeEndInput.value).toISOString();
-
-            // Resolve flow: carry the time into finalize rather than posting now.
             if (timeMode === 'resolve') {
                 resolveState.member = member;
                 resolveState.internalNote = timeNote.value.trim() || resolveState.internalNote;
-                resolveState.timeStart = startISO;
-                resolveState.timeEnd = endISO;
-                timeModalOverlay.classList.remove('show');
+                resolveState.timeStart = startISO; resolveState.timeEnd = endISO;
+                closeTimeSheet();
                 openResolveEmailStep();
                 return;
             }
-
-            timeSubmitBtn.disabled = true;
-            timeSubmitBtn.textContent = 'Saving...';
-
+            timeSubmitBtn.disabled = true; timeSubmitBtn.textContent = 'Saving…';
             try {
                 const response = await fetch('/add-time', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({
-                        ticket_id: TICKET.id,
-                        time_start: startISO,
-                        time_end: endISO,
-                        notes: timeNote.value.trim(),
-                        member_identifier: member,
-                    }),
+                    body: JSON.stringify({ ticket_id: TICKET.id, time_start: startISO, time_end: endISO, notes: timeNote.value.trim(), member_identifier: member }),
                 });
                 const data = await response.json();
                 if (data.success) {
-                    timeModalOverlay.classList.remove('show');
+                    closeTimeSheet();
                     const hrs = (data.actual_hours != null ? data.actual_hours : span);
                     showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member));
-                } else {
-                    showToast(data.error || 'Failed to log time', 'error');
-                }
-            } catch (err) {
-                showToast('Connection error — try again', 'error');
-            }
-
-            timeSubmitBtn.disabled = false;
-            timeSubmitBtn.textContent = 'Save Time Entry';
+                } else { showToast(data.error || 'Failed to log time', 'error'); }
+            } catch (err) { showToast('Connection error — try again', 'error'); }
+            timeSubmitBtn.disabled = false; timeSubmitBtn.textContent = 'Save Time';
         });
 
-        // --- Save ---
-        function saveToTicket() {
+        // ===== Save to ticket =====
+        function saveToTicket(){
             if (!hasNewMessages || messages.length === 0) return;
-            fireSave();
-        }
-
-        function fireSave() {
             saveBtn.disabled = true;
-            resolveBtn.disabled = true;
-            saveBtn.textContent = 'Saved';
+            setActContent(saveBtn, 'check', 'Saved');
             hasNewMessages = false;
-
             try {
                 fetch('/save-note', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({
-                        ticket_id: TICKET.id,
-                        messages: messages,
-                        model: modelSelect.value,
-                        member_identifier: selectedMember || null,
-                    }),
+                    body: JSON.stringify({ ticket_id: TICKET.id, messages: messages, model: modelSelect.value, member_identifier: selectedMember || null }),
                 });
             } catch (err) {}
-
-            showToast('Note is being saved...');
+            showToast('Note is being saved…');
         }
 
-        // --- Resolve (multi-step) ---
-        // Click Resolve -> generate internal note + customer email (saved to
-        // nothing yet) -> log time or skip -> review email -> finalize: the
-        // internal note (into the time entry and/or Internal Analysis), the
-        // optional email, and the Resolved status are all committed as the tech.
-        let resolveState = null;  // { internalNote, customerEmail, member, timeStart, timeEnd }
-        const resolveSkipEmailBtn = document.getElementById('resolveSkipEmail');
-        const resolveSendEmailBtn = document.getElementById('resolveSendEmail');
-
-        function abortResolve() {
+        // ===== Resolve (multi-step) =====
+        let resolveState = null;
+        function abortResolve(){
             resolveState = null;
             resolveBtn.disabled = false;
-            resolveBtn.textContent = 'Resolve';
         }
-
-        async function resolveTicket() {
-            if (resolveState) return;  // already mid-resolve
+        async function resolveTicket(){
+            if (resolveState) return;
             resolveBtn.disabled = true;
-            resolveBtn.textContent = 'Preparing...';
-
             let data;
             try {
                 const response = await fetch('/resolve', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({
-                        ticket_id: TICKET.id,
-                        messages: messages,
-                        model: modelSelect.value,
-                        member_identifier: selectedMember || null,
-                    }),
+                    body: JSON.stringify({ ticket_id: TICKET.id, messages: messages, model: modelSelect.value, member_identifier: selectedMember || null }),
                 });
                 data = await response.json();
-            } catch (err) {
-                showToast('Connection error — try again', 'error');
-                abortResolve();
-                return;
-            }
-            if (!data || !data.success) {
-                showToast((data && data.error) || 'Failed to prepare resolution', 'error');
-                abortResolve();
-                return;
-            }
-
-            resolveState = {
-                internalNote: data.internal_note,
-                customerEmail: data.customer_email,
-                member: selectedMember || '',
-                timeStart: null,
-                timeEnd: null,
-            };
-            resolveBtn.textContent = 'Resolve';
-            // Step 1: time entry (with Skip); the note is prefilled with the internal note.
+            } catch (err) { showToast('Connection error — try again', 'error'); abortResolve(); return; }
+            if (!data || !data.success) { showToast((data && data.error) || 'Failed to prepare resolution', 'error'); abortResolve(); return; }
+            resolveState = { internalNote: data.internal_note, customerEmail: data.customer_email, member: selectedMember || '', timeStart: null, timeEnd: null };
             openTimeModal('resolve');
         }
-
-        // --- Type/Subtype/Item picker (cascading, prefilled with the ticket's current) ---
-        function fillCatSelect(sel, options, selectedId, placeholder) {
+        function fillCatSelect(sel, options, selectedId, placeholder){
             sel.innerHTML = '';
-            const ph = document.createElement('option');
-            ph.value = '';
-            ph.textContent = placeholder;
-            sel.appendChild(ph);
-            (options || []).forEach(function(o) {
-                const opt = document.createElement('option');
-                opt.value = String(o.id);
-                opt.textContent = o.name;
-                sel.appendChild(opt);
-            });
-            sel.value = (selectedId != null && (options || []).some(function(o) { return String(o.id) === String(selectedId); }))
-                ? String(selectedId) : '';
+            const ph = document.createElement('option'); ph.value = ''; ph.textContent = placeholder; sel.appendChild(ph);
+            (options || []).forEach(function(o){ const opt = document.createElement('option'); opt.value = String(o.id); opt.textContent = o.name; sel.appendChild(opt); });
+            sel.value = (selectedId != null && (options || []).some(function(o){ return String(o.id) === String(selectedId); })) ? String(selectedId) : '';
         }
-
-        function refreshSubtypes(preSub, preItem) {
+        function refreshSubtypes(preSub, preItem){
             const subs = (BOARD_OPTIONS.subtypes && BOARD_OPTIONS.subtypes[resType.value]) || [];
             fillCatSelect(resSubtype, subs, preSub, subs.length ? 'Select subtype…' : '(none)');
             refreshItems(preItem);
         }
-        function refreshItems(preItem) {
+        function refreshItems(preItem){
             const items = (BOARD_OPTIONS.items && BOARD_OPTIONS.items[resType.value + '-' + resSubtype.value]) || [];
             fillCatSelect(resItem, items, preItem, items.length ? 'Select item…' : '(none)');
         }
-        resType.addEventListener('change', function() { refreshSubtypes(null, null); });
-        resSubtype.addEventListener('change', function() { refreshItems(null); });
-
-        function buildCategoryPicker() {
-            if (!BOARD_OPTIONS || !BOARD_OPTIONS.types || BOARD_OPTIONS.types.length === 0) {
-                categorySection.style.display = 'none';
-                return;
-            }
-            categorySection.style.display = 'block';
+        resType.addEventListener('change', function(){ refreshSubtypes(null, null); });
+        resSubtype.addEventListener('change', function(){ refreshItems(null); });
+        function buildCategoryPicker(){
+            if (!BOARD_OPTIONS || !BOARD_OPTIONS.types || BOARD_OPTIONS.types.length === 0) { categorySection.style.display = 'none'; return; }
+            categorySection.style.display = 'flex';
             fillCatSelect(resType, BOARD_OPTIONS.types, TICKET.type_id, 'Select type…');
             refreshSubtypes(TICKET.subtype_id, TICKET.item_id);
         }
-
-        // Step 2: review the customer email + categorization, then finalize.
-        function openResolveEmailStep() {
-            resolveStatus.style.color = '';
+        function openResolveEmailStep(){
             resolveStatus.textContent = 'Set the ticket type/subtype and review the email, then resolve. Internal notes'
-                + (resolveState.timeStart ? ' and time' : '')
-                + ' will be saved and the ticket marked resolved.';
+                + (resolveState.timeStart ? ' and time' : '') + ' will be saved and the ticket marked resolved.';
             buildCategoryPicker();
-            emailSection.style.display = 'block';
+            emailSection.style.display = 'flex';
             emailPreview.value = resolveState.customerEmail || '';
-            resolveSkipEmailBtn.textContent = "Resolve, Don't Email";
-            resolveSendEmailBtn.textContent = 'Send Email & Resolve';
-            resolveSkipEmailBtn.disabled = false;
-            resolveSendEmailBtn.disabled = false;
-            resolveModalOverlay.classList.add('show');
+            resolveSkipEmailBtn.disabled = false; resolveSendEmailBtn.disabled = false;
+            openResolveSheet();
         }
-
-        // Fire the resolve and return immediately — the tech doesn't wait on the
-        // button. The modal closes, a banner tracks progress, and success/error
-        // is reported when the background request completes.
-        function finalizeResolve(sendEmail) {
+        function finalizeResolve(sendEmail){
+            if (!resolveState) return;  // guard against a double-click while the sheet slides away
+            resolveSkipEmailBtn.disabled = true;
+            resolveSendEmailBtn.disabled = true;
             const payload = {
                 ticket_id: TICKET.id,
                 internal_note: resolveState.internalNote,
@@ -1932,294 +1286,258 @@
                 subtype_id: resSubtype.value ? parseInt(resSubtype.value, 10) : null,
                 item_id: resItem.value ? parseInt(resItem.value, 10) : null,
             };
-
-            // Free the screen right away.
-            resolveModalOverlay.classList.remove('show');
+            closeResolveSheet();
             resolveState = null;
             resolveBtn.disabled = true;
-            resolveBtn.textContent = 'Resolving…';
             showBanner('Resolving ticket #' + TICKET.id + ' — saving notes, time, and status…', 'info');
-
             fetch('/finalize-resolve', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
                 body: JSON.stringify(payload),
-            }).then(function(r) { return r.json(); }).then(function(data) {
+            }).then(function(r){ return r.json(); }).then(function(data){
                 if (data && data.success) {
                     let msg = data.message || ('Ticket #' + TICKET.id + ' resolved');
-                    if (data.warnings && data.warnings.length) {
-                        showBanner(msg + ' — note: ' + data.warnings.join(' • '), 'error');
-                    } else {
-                        showBanner(msg, 'success');
-                    }
-                    resolveBtn.textContent = 'Resolved';
+                    if (data.warnings && data.warnings.length) showBanner(msg + ' — note: ' + data.warnings.join(' • '), 'error');
+                    else showBanner(msg, 'success');
                     saveBtn.disabled = true;
+                    setActContent(resolveBtn, 'check', 'Resolved');
                 } else {
                     showBanner('Resolve failed for #' + TICKET.id + ': ' + ((data && data.error) || 'unknown error'), 'error');
                     resolveBtn.disabled = false;
-                    resolveBtn.textContent = 'Resolve';
                 }
-            }).catch(function() {
+            }).catch(function(){
                 showBanner('Resolve failed for #' + TICKET.id + ': connection error — please retry', 'error');
                 resolveBtn.disabled = false;
-                resolveBtn.textContent = 'Resolve';
             });
         }
+        resolveSkipEmailBtn.addEventListener('click', function(){ finalizeResolve(false); });
+        resolveSendEmailBtn.addEventListener('click', function(){ finalizeResolve(true); });
+        resolveClose.addEventListener('click', function(){ closeResolveSheet(); abortResolve(); });
 
-        resolveSkipEmailBtn.addEventListener('click', function() { finalizeResolve(false); });
-        resolveSendEmailBtn.addEventListener('click', function() { finalizeResolve(true); });
-
-        // --- Clear Chat ---
-        async function clearChat() {
-            if (messages.length === 0) return;
-
-            const confirmed = await showDialog('Clear the chat? This will permanently delete the conversation for all techs.');
+        // ===== Clear AI conversation =====
+        async function clearChat(){
+            if (messages.length === 0) { showToast('Nothing to clear'); return; }
+            const confirmed = await showConfirm('Clear the AI conversation? This permanently deletes it for all techs. (The live customer chat is never affected.)');
             if (!confirmed) return;
-
-            // Delete from DB
             fetch('/messages/clear', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
                 body: JSON.stringify({ ticket_id: TICKET.id }),
-            }).catch(function() {});
-
+            }).catch(function(){});
             messages = [];
             pendingAttachments = [];
             renderAttachmentStrip();
             hasNewMessages = false;
             saveBtn.disabled = true;
-            resolveBtn.disabled = true;
-            saveBtn.textContent = 'Save to Ticket';
-            chatArea.innerHTML = '<div class="welcome-message">Hi, I\'m Hercules — ask me anything about this ticket. I have the full context loaded.</div>';
+            setActContent(saveBtn, 'bookmark_add', 'Save');
+            aiThread.innerHTML = '<div class="welcome">Hi, I\'m Hercules — ask me anything about this ticket. I have the full context loaded.</div>';
+            renderSimilarTickets();
+            setView('chat');
+            showToast('Conversation cleared');
         }
 
-        // --- Live Messaging (technician <-> customer) ---
-        const inputArea = document.querySelector('.input-area');
-        const liveBar = document.getElementById('liveBar');
-        const liveToggleAi = document.getElementById('liveToggleAi');
-        const liveToggleLive = document.getElementById('liveToggleLive');
-        const LIVE_ACTIVE = {{ live_active | tojson }};
-
+        // ===== Live messaging (technician <-> customer) =====
         let liveMode = false;
         let liveWs = null;
         let liveWantOpen = false;
         const liveRenderedIds = new Set();
 
-        // --- Live chat identity: WHO is messaging the customer ---
-        // Prefer the tech CW says is viewing (CURRENT_MEMBER); fall back to the
-        // ticket owner / picker. Overridable via the "Messaging as" picker so any
-        // tech on the ticket shows up under their own full name on both sides.
-        let liveIdentity = memberInList(CURRENT_MEMBER) ? CURRENT_MEMBER : (selectedMember || '');
-        function liveMember() { return liveIdentity || selectedMember || ''; }
-        function liveAuthorName() { return memberName(liveMember()) || 'Technician'; }
+        // Read receipts (technician side only). lastReadTs is the latest moment we
+        // know the customer had seen the thread — driven by an explicit customer
+        // `read` frame OR, pragmatically, by any customer reply (replying implies
+        // they read what came before). We never emit tech read receipts.
+        let lastReadTs = 0;
+        function tsMs(v){ if (!v) return 0; const t = Date.parse(v); return isNaN(t) ? 0 : t; }
+        function markRead(v){ const m = tsMs(v); if (m && m > lastReadTs) { lastReadTs = m; updateReadReceipt(); } }
+        function updateReadReceipt(){
+            const old = liveThread.querySelector('.read-receipt');
+            if (old) old.remove();
+            const techMsgs = liveThread.querySelectorAll('.msg-row.out');
+            const last = techMsgs[techMsgs.length - 1];
+            if (!last) return;
+            const ts = Number(last.dataset.ts || 0);
+            const read = lastReadTs && ts && lastReadTs >= ts;
+            const receipt = document.createElement('div');
+            receipt.className = 'read-receipt' + (read ? ' is-read' : '');
+            receipt.innerHTML = '<span class="i">' + (read ? 'done_all' : 'done') + '</span>' + (read ? 'Read' : 'Delivered');
+            last.insertAdjacentElement('afterend', receipt);
+        }
 
-        // "Messaging as" picker — lets whichever tech is on the ticket pick their
-        // own identity so they (and the customer) see their real full name.
-        (function initLiveAsPicker() {
-            const sel = document.getElementById('liveAsSelect');
-            if (!sel) return;
-            if (!MEMBERS || !MEMBERS.length) {
-                const wrap = document.querySelector('.live-as-wrap');
-                if (wrap) wrap.style.display = 'none';
-                return;
+        // Typing bubble (iPhone-style) for the customer.
+        let custTypingTimer = null;
+        function showCustomerTyping(name){
+            clearTimeout(custTypingTimer);
+            let row = document.getElementById('custTyping');
+            if (!row) {
+                row = document.createElement('div');
+                row.id = 'custTyping';
+                row.className = 'msg-row in';
+                row.innerHTML = '<div class="msg-name">' + escapeHtml(name || TICKET.contact_name || 'Customer') + '</div>'
+                    + '<div class="bubble bubble-in" style="padding:12px 14px;"><span class="typing-dots"><span></span><span></span><span></span></span></div>';
+                liveThread.appendChild(row);
+                scrollThread(liveThread);
             }
-            MEMBERS.forEach(function(m) {
-                const opt = document.createElement('option');
-                opt.value = m.identifier;
-                opt.textContent = m.name;
-                sel.appendChild(opt);
-            });
-            const cur = liveMember();
-            if (cur && MEMBERS.some(function(m) { return m.identifier === cur; })) {
-                sel.value = cur;
-            } else {
-                sel.selectedIndex = 0;
-                liveIdentity = sel.value;
-            }
-            sel.addEventListener('change', function() {
-                liveIdentity = sel.value;
-                setStoredMember(sel.value);
-            });
-        })();
+            custTypingTimer = setTimeout(hideCustomerTyping, 6000);
+        }
+        function hideCustomerTyping(){ clearTimeout(custTypingTimer); const r = document.getElementById('custTyping'); if (r) r.remove(); }
 
-        function addLiveSystem(textStr) {
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
+        function addLiveSystem(textStr){
             const div = document.createElement('div');
             div.className = 'live-system';
             div.textContent = textStr;
-            chatArea.appendChild(div);
-            chatArea.scrollTop = chatArea.scrollHeight;
+            liveThread.appendChild(div);
+            scrollThread(liveThread);
         }
-
-        function addLiveMessage(env) {
-            if (env.id) {
-                if (liveRenderedIds.has(env.id)) return;  // dedupe echoes/backlog
-                liveRenderedIds.add(env.id);
-            }
-            const welcome = chatArea.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
+        function addLiveMessage(env){
+            if (env.id) { if (liveRenderedIds.has(env.id)) return; liveRenderedIds.add(env.id); }
             const isTech = env.sender === 'technician';
-            const div = document.createElement('div');
-            div.className = 'message ' + (isTech ? 'message-tech-out' : 'message-customer-in');
-            const label = document.createElement('div');
-            label.className = 'message-label';
-            // Distinguish your own messages from other techs on the same ticket.
+            if (!isTech) hideCustomerTyping();
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (isTech ? 'out' : 'in');
+            row.dataset.ts = tsMs(env.ts) || Date.now();
+            const name = document.createElement('div');
+            name.className = 'msg-name';
             const mine = isTech && env.memberIdentifier && env.memberIdentifier === liveMember();
-            label.textContent = isTech
+            name.textContent = isTech
                 ? ((mine ? 'You' : (env.authorName || 'Technician')) + ' → ' + (TICKET.contact_name || 'Customer'))
                 : (env.authorName || TICKET.contact_name || 'Customer');
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.style.whiteSpace = 'pre-wrap';
-            contentDiv.textContent = env.body || '';
-            // Render any attachments the customer sent from the widget: images inline
-            // (data URL), everything else as a named chip (the file is on the CW ticket).
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble ' + (isTech ? 'bubble-out' : 'bubble-in');
+            const textSpan = document.createElement('span');
+            textSpan.style.whiteSpace = 'pre-wrap';
+            textSpan.textContent = env.body || '';
+            bubble.appendChild(textSpan);
             if (Array.isArray(env.attachments) && env.attachments.length) {
-                env.attachments.forEach(function (att) {
+                env.attachments.forEach(function(att){
                     if (!att) return;
                     if (att.isImage && typeof att.dataUrl === 'string' && att.dataUrl.indexOf('data:image/') === 0) {
                         const img = document.createElement('img');
-                        img.className = 'message-image';
-                        img.src = att.dataUrl;
-                        img.alt = att.name || 'image';
-                        img.title = att.name || 'image';
-                        img.addEventListener('click', function () {
-                            img.classList.toggle('expanded');
-                            chatArea.scrollTop = chatArea.scrollHeight;
-                        });
-                        contentDiv.appendChild(img);
+                        img.className = 'msg-image'; img.src = att.dataUrl; img.alt = att.name || 'image'; img.title = att.name || 'image';
+                        img.addEventListener('click', function(){ img.classList.toggle('expanded'); scrollThread(liveThread); });
+                        bubble.appendChild(img);
                     } else {
                         const chip = document.createElement('div');
+                        chip.className = 'att-chip';
                         chip.textContent = '📎 ' + (att.name || 'attachment') + ' (on ticket)';
-                        chip.style.marginTop = '6px';
-                        chip.style.fontSize = '12px';
-                        chip.style.opacity = '0.85';
-                        contentDiv.appendChild(chip);
+                        bubble.appendChild(chip);
                     }
                 });
             }
-            div.appendChild(label);
-            div.appendChild(contentDiv);
-            chatArea.appendChild(div);
-            chatArea.scrollTop = chatArea.scrollHeight;
-            if (!isTech && document.hidden) {
-                try { showToast('New message from ' + (env.authorName || 'customer')); } catch (e) {}
+            row.appendChild(name); row.appendChild(bubble);
+            liveThread.appendChild(row);
+            if (isTech) {
+                updateReadReceipt();
+                // If the customer is still typing, keep their bubble pinned to the bottom
+                // rather than stranded above the tech's newest message.
+                const t = document.getElementById('custTyping');
+                if (t) liveThread.appendChild(t);
+            } else {
+                markRead(env.ts); updateReadReceipt();  // a reply implies the customer read prior messages
             }
+            scrollThread(liveThread);
+            if (!isTech && document.hidden) { try { showToast('New message from ' + (env.authorName || 'customer')); } catch (e) {} }
         }
 
-        function handleLiveFrame(frame) {
+        function handleLiveFrame(frame){
             if (!frame) return;
-            if (frame.kind === 'history') { (frame.messages || []).forEach(addLiveMessage); return; }
+            if (frame.kind === 'history') { (frame.messages || []).forEach(addLiveMessage); updateReadReceipt(); return; }
             if (frame.kind === 'message') { addLiveMessage(frame); return; }
-            if (frame.kind === 'live_start') { addLiveSystem('🟢 Live chat started.'); return; }
-            if (frame.kind === 'live_end') {
-                addLiveSystem('Live chat ended.');
-                if (liveMode) setLiveMode(false, true);
+            if (frame.kind === 'typing') {
+                if (frame.sender === 'customer') { frame.state === 'stop' ? hideCustomerTyping() : showCustomerTyping(frame.authorName); }
+                return;
             }
+            if (frame.kind === 'read') { if (frame.sender === 'customer') markRead(frame.ts); return; }
+            if (frame.kind === 'live_start') { addLiveSystem('🟢 Live chat started'); return; }
+            if (frame.kind === 'live_end') { addLiveSystem('Live chat ended'); if (liveMode) setMode('ai', true); }
         }
 
-        function openLiveWs() {
+        function openLiveWs(){
             liveWantOpen = true;
             if (liveWs && (liveWs.readyState === WebSocket.OPEN || liveWs.readyState === WebSocket.CONNECTING)) return;
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            const params = new URLSearchParams({
-                token: POD_TOKEN,
-                ticketId: TICKET.id,
-                member: liveMember(),
-                author: liveAuthorName(),
-            });
+            const params = new URLSearchParams({ token: POD_TOKEN, ticketId: TICKET.id, member: liveMember(), author: liveAuthorName() });
             liveWs = new WebSocket(proto + '://' + location.host + '/live/ws?' + params.toString());
-            liveWs.onmessage = function(ev) { try { handleLiveFrame(JSON.parse(ev.data)); } catch (e) {} };
-            liveWs.onclose = function() { liveWs = null; if (liveWantOpen) setTimeout(openLiveWs, 2000); };
-            liveWs.onerror = function() { try { liveWs.close(); } catch (e) {} };
+            liveWs.onmessage = function(ev){ try { handleLiveFrame(JSON.parse(ev.data)); } catch (e) {} };
+            // Only the CURRENTLY active socket may null the ref / schedule a reconnect. After a
+            // rapid Live->Assistant->Live toggle, a stale socket's late onclose must not clobber
+            // the newer socket (which would orphan it and spawn a duplicate connection).
+            liveWs.onclose = function(){ if (this === liveWs) { liveWs = null; if (liveWantOpen) setTimeout(openLiveWs, 2000); } };
+            liveWs.onerror = function(){ try { this.close(); } catch (e) {} };
         }
+        function closeLiveWs(){ liveWantOpen = false; if (liveWs) { try { liveWs.onclose = null; liveWs.close(); } catch (e) {} liveWs = null; } }
 
-        function closeLiveWs() {
-            liveWantOpen = false;
-            if (liveWs) { try { liveWs.close(); } catch (e) {} liveWs = null; }
-        }
-
-        function postLive(path) {
+        function postLive(path){
             return fetch(path, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                body: JSON.stringify({
-                    ticket_id: TICKET.id,
-                    member_identifier: liveMember() || null,
-                    author_name: liveAuthorName(),
-                    model: modelSelect.value,
-                }),
-            }).then(function(r) { return r.json().catch(function() { return {}; }); }).catch(function() { return {}; });
+                body: JSON.stringify({ ticket_id: TICKET.id, member_identifier: liveMember() || null, author_name: liveAuthorName(), model: modelSelect.value }),
+            }).then(function(r){ return r.json().catch(function(){ return {}; }); }).catch(function(){ return {}; });
         }
 
-        function setLiveMode(on, skipServer) {
-            liveMode = !!on;
-            inputArea.classList.toggle('live-on', liveMode);
-            liveBar.classList.toggle('on', liveMode);
-            liveToggleAi.classList.toggle('active', !liveMode);
-            liveToggleLive.classList.toggle('active', liveMode);
-            if (liveMode) {
-                chatInput.placeholder = 'Message goes live to ' + (TICKET.contact_name || 'the customer') + ' — type your reply…';
-                sendBtn.textContent = 'Send to Customer';
+        function setMode(mode, skipServer){
+            const on = mode === 'live';
+            liveMode = on;
+            document.body.classList.toggle('live-mode', on);
+            aiTab.classList.toggle('active', !on);
+            liveTab.classList.toggle('active', on);
+            if (on) {
+                $('liveAsName').textContent = liveAuthorName();
+                chatInput.placeholder = 'Message ' + (TICKET.contact_name || 'the customer') + '…';
+                modeText.textContent = 'Live — replies go to the customer';
                 openLiveWs();
                 if (!skipServer) postLive('/live/start');
+                scrollThread(liveThread);
             } else {
-                chatInput.placeholder = 'Type a message or paste a screenshot...';
-                sendBtn.textContent = 'Send';
+                chatInput.placeholder = 'Ask about ticket #' + TICKET.id + '…';
+                modeText.textContent = 'Assistant — ask about this ticket';
+                hideCustomerTyping();
+                sendTyping('stop');
                 closeLiveWs();
-                if (!skipServer) {
-                    postLive('/live/end').then(function(res) {
-                        if (res && res.note_saved) showToast('Live chat summary saved to ticket');
-                    });
-                }
+                if (!skipServer) postLive('/live/end').then(function(res){ if (res && res.note_saved) showToast('Live chat summary saved to ticket'); });
             }
         }
 
-        function sendLiveMessage(text) {
+        function sendLiveMessage(text){
             if (!text) return;
-            if (!liveWs || liveWs.readyState !== WebSocket.OPEN) {
-                showToast('Reconnecting live chat — try again in a moment', 'error');
-                openLiveWs();
-                return;
-            }
-            // The message echoes back via the bus (deduped by id), so we don't
-            // render it optimistically here.
-            liveWs.send(JSON.stringify({
-                body: text,
-                authorName: liveAuthorName(),
-                memberIdentifier: liveMember() || null,
-            }));
+            if (!liveWs || liveWs.readyState !== WebSocket.OPEN) { showToast('Reconnecting live chat — try again in a moment', 'error'); openLiveWs(); return; }
+            sendTyping('stop');
+            liveWs.send(JSON.stringify({ body: text, authorName: liveAuthorName(), memberIdentifier: liveMember() || null }));
             chatInput.value = '';
             chatInput.style.height = 'auto';
             chatInput.focus();
         }
 
-        // --- Event Listeners ---
+        // Tech typing signal (throttled). The customer widget can show "typing…".
+        let techTypingTimer = null, lastTypingSent = 0;
+        function sendTyping(state){
+            if (!liveWs || liveWs.readyState !== WebSocket.OPEN) return;
+            try { liveWs.send(JSON.stringify({ kind: 'typing', state: state, authorName: liveAuthorName(), memberIdentifier: liveMember() || null })); } catch (e) {}
+        }
+        function techTyping(){
+            if (!liveMode) return;
+            const now = Date.now();
+            if (now - lastTypingSent > 2500) { lastTypingSent = now; sendTyping('start'); }
+            clearTimeout(techTypingTimer);
+            techTypingTimer = setTimeout(function(){ sendTyping('stop'); lastTypingSent = 0; }, 3500);
+        }
+
+        // ===== Event listeners =====
         sendBtn.addEventListener('click', sendMessage);
-
-        chatInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        chatInput.addEventListener('input', function() {
+        chatInput.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+        chatInput.addEventListener('input', function(){
             chatInput.style.height = 'auto';
-            chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 90) + 'px';
+            if (liveMode) techTyping();
         });
-
-        addTimeBtn.addEventListener('click', openTimeModal);
+        addTimeBtn.addEventListener('click', function(){ openTimeModal('add'); });
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         clearBtn.addEventListener('click', clearChat);
+        aiTab.addEventListener('click', function(){ if (liveMode) setMode('ai'); });
+        liveTab.addEventListener('click', function(){ if (!liveMode) setMode('live'); });
 
-        liveToggleAi.addEventListener('click', function() { if (liveMode) setLiveMode(false); });
-        liveToggleLive.addEventListener('click', function() { if (!liveMode) setLiveMode(true); });
-
-        // Resume a live session that was already active when the pod (re)loaded.
-        if (LIVE_ACTIVE) setLiveMode(true, true);
+        // Resume an already-active live session after a pod reload.
+        if (LIVE_ACTIVE) setMode('live', true);
     </script>
     {% endif %}
 </body>
