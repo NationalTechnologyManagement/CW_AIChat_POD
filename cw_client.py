@@ -224,8 +224,15 @@ async def send_email_to_contact(
     ticket_id: int,
     text: str,
     member_identifier: str | None = None,
+    resolution: bool = False,
 ) -> dict:
-    """Send email to ticket contact via a 0-hour time entry with Discussion notes."""
+    """Email the ticket contact via a 0-hour time entry.
+
+    By default the text is posted as a Discussion note (a mid-ticket customer
+    update). When resolution=True it is recorded as the ticket's Resolution — the
+    customer-facing summary of how the issue was fixed — instead of Discussion, so
+    the emailed message and the Resolution field are the same thing. (The internal
+    technician analysis is written separately and stays on Internal Analysis.)"""
     now = datetime.now(timezone.utc)
     time_start = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -237,9 +244,9 @@ async def send_email_to_contact(
         "actualHours": 0,
         "billableOption": "DoNotBill",
         "notes": text,
-        "addToDetailDescriptionFlag": True,
+        "addToDetailDescriptionFlag": not resolution,
         "addToInternalAnalysisFlag": False,
-        "addToResolutionFlag": False,
+        "addToResolutionFlag": resolution,
         "emailContactFlag": True,
         "emailResourceFlag": False,
         "emailCcFlag": False,

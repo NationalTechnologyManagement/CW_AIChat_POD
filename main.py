@@ -735,13 +735,18 @@ async def _resolve_status_id(board_id: int) -> int | None:
 
 @app.post("/finalize-resolve")
 async def finalize_resolve(request: FinalizeResolveRequest):
-    """Commit a resolution: internal note (into the time entry and/or Internal
-    Analysis), optional customer email, and move the ticket to Resolved — all
-    attributed to the tech. Notes and time are written before the status flips,
-    so a resolved ticket always has its documentation in place."""
+    """Commit a resolution, all attributed to the tech:
+      - the internal note (technician analysis) -> Internal Analysis ONLY,
+      - the customer email -> the ticket Resolution (the customer-facing summary),
+        emailed to the contact when requested,
+      - optional Type/Subtype/Item, then move the ticket to Resolved.
+    Notes are written before the status flips, so a resolved ticket always has its
+    documentation in place. The internal note is NEVER the Resolution and is never
+    sent to the customer."""
     has_time = bool(request.time_start and request.time_end)
     result = {"success": True, "time_logged": False, "internal_note_saved": False,
-              "email_sent": False, "category_set": False, "status_set": False, "warnings": []}
+              "resolution_saved": False, "email_sent": False, "category_set": False,
+              "status_set": False, "warnings": []}
 
     # Fetch the ticket up front; without it we can't attribute or resolve.
     try:
@@ -760,9 +765,11 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             **result, "success": False,
             "error": "Select a technician before logging time."})
 
-    # 1. The critical write: internal note, into the time entry (also posted to
-    #    Internal Analysis) when time is logged, otherwise a standalone note.
-    #    If this fails we abort cleanly — nothing saved — so a retry won't double up.
+    # 1. The critical write: the internal note (technician analysis), into the time
+    #    entry (and Internal Analysis) when time is logged, otherwise a standalone
+    #    Internal Analysis note. This is INTERNAL ONLY — never the Resolution and
+    #    never customer-visible. If it fails we abort cleanly — nothing saved — so a
+    #    retry won't double up.
     try:
         if has_time:
             entry = await cw_client.create_time_entry(
@@ -772,21 +779,21 @@ async def finalize_resolve(request: FinalizeResolveRequest):
                 notes=request.internal_note,
                 member_identifier=author,
                 add_to_internal=True,
-                add_to_resolution=True,
+                add_to_resolution=False,
             )
             result["time_logged"] = True
             result["internal_note_saved"] = True
-            print(f"[finalize] ticket {request.ticket_id}: time entry {entry.get('id')} as {author}")
+            print(f"[finalize] ticket {request.ticket_id}: time entry {entry.get('id')} (internal) as {author}")
         else:
             await cw_client.create_ticket_note(
                 ticket_id=request.ticket_id,
                 text=request.internal_note,
                 member_identifier=author,
                 internal=True,
-                resolution=True,
+                resolution=False,
             )
             result["internal_note_saved"] = True
-            print(f"[finalize] ticket {request.ticket_id}: internal+resolution note as {author}")
+            print(f"[finalize] ticket {request.ticket_id}: internal-analysis note as {author}")
     except Exception as e:
         step = "time entry" if has_time else "internal note"
         print(f"[finalize] ticket {request.ticket_id} {step} failed: {e!r}")
@@ -796,18 +803,35 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             "error": f"Could not save the {step}: {_cw_error(e)}. Nothing was changed — adjust and try again.",
         })
 
-    # 2. Customer email (best effort — never blocks the resolve).
-    if request.send_email and request.email_text.strip():
+    # 2. The Resolution — the customer-facing summary of how the issue was fixed.
+    #    This (NOT the internal note) is recorded as the ticket's Resolution, and it
+    #    is emailed to the contact when the tech chose to send it. Best effort — a
+    #    failure here never blocks the resolve.
+    resolution_text = (request.email_text or "").strip()
+    if resolution_text:
         try:
-            await cw_client.send_email_to_contact(
-                ticket_id=request.ticket_id,
-                text=request.email_text,
-                member_identifier=author,
-            )
-            result["email_sent"] = True
+            if request.send_email:
+                await cw_client.send_email_to_contact(
+                    ticket_id=request.ticket_id,
+                    text=resolution_text,
+                    member_identifier=author,
+                    resolution=True,
+                )
+                result["email_sent"] = True
+            else:
+                # Not emailing, but still record it as the Resolution (unsent).
+                await cw_client.create_ticket_note(
+                    ticket_id=request.ticket_id,
+                    text=resolution_text,
+                    member_identifier=author,
+                    internal=False,
+                    resolution=True,
+                )
+            result["resolution_saved"] = True
+            print(f"[finalize] ticket {request.ticket_id}: resolution saved (emailed={result['email_sent']}) as {author}")
         except Exception as e:
-            print(f"[finalize] ticket {request.ticket_id} email failed: {e!r}")
-            result["warnings"].append(f"Email not sent: {_cw_error(e)}")
+            print(f"[finalize] ticket {request.ticket_id} resolution/email failed: {e!r}")
+            result["warnings"].append(f"Resolution not saved: {_cw_error(e)}")
 
     # 3. Type/Subtype/Item — ConnectWise requires a valid categorization before
     #    a ticket can be resolved. Set it (if provided) ahead of the status change.
@@ -842,8 +866,8 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     if result["time_logged"]:
         parts.append("time logged")
     parts.append("internal note saved")
-    if result["email_sent"]:
-        parts.append("email sent")
+    if result["resolution_saved"]:
+        parts.append("resolution emailed" if result["email_sent"] else "resolution saved")
     parts.append("ticket resolved" if result["status_set"] else "status NOT changed")
     result["message"] = "Done — " + ", ".join(parts)
     return result
