@@ -1,3 +1,4 @@
+import asyncio
 import os
 import base64
 from datetime import datetime, timezone
@@ -117,6 +118,35 @@ async def get_ticket_notes(ticket_id: int) -> list[dict]:
         for n in notes
         if n.get("text", "").strip()
     ]
+
+
+async def get_ticket_configurations(ticket_id: int) -> list[dict]:
+    """Return the ConnectWise configuration records attached to a ticket."""
+    response = await _client.get(
+        f"/service/tickets/{ticket_id}/configurations",
+        params={"pageSize": 50},
+    )
+    _handle_response(response)
+    references = response.json()
+
+    async def normalize(item: dict) -> dict | None:
+        configuration_id = item.get("id")
+        name = (item.get("name") or item.get("identifier") or "").strip()
+
+        # Manage often returns only an ID for a ticket configuration association.
+        # Hydrate that reference before using its asset name as a computer name.
+        if not name and configuration_id:
+            detail_response = await _client.get(f"/company/configurations/{configuration_id}")
+            _handle_response(detail_response)
+            detail = detail_response.json()
+            name = (detail.get("name") or detail.get("identifier") or "").strip()
+
+        if not configuration_id or not name:
+            return None
+        return {"id": configuration_id, "name": name}
+
+    configurations = await asyncio.gather(*(normalize(item) for item in references))
+    return [item for item in configurations if item]
 
 
 async def search_tickets(conditions: str, page_size: int = 5) -> list[dict]:
