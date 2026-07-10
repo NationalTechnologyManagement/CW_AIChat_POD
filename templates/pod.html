@@ -289,6 +289,20 @@
         select.inp{-webkit-appearance:none;appearance:none;cursor:pointer;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 16px) 17px,calc(100% - 11px) 17px;background-size:5px 5px;background-repeat:no-repeat;}
         select.inp option{background:var(--panel);color:var(--text);}
         textarea.inp{resize:none;line-height:1.55;}
+        /* Expandable fields: a corner button pops the textarea out to a full-screen editor. */
+        .ta-wrap{position:relative;}
+        .ta-wrap textarea.inp{padding-right:40px;}
+        .ta-expand{position:absolute;top:8px;right:8px;width:27px;height:27px;border-radius:7px;border:1px solid var(--border-4);background:var(--panel);color:var(--icon);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,border-color .15s;}
+        .ta-expand .i{font-size:16px;}
+        .ta-expand:hover{color:var(--accent);border-color:var(--accent-border);}
+        .editor-overlay{position:fixed;inset:0;z-index:1300;background:var(--card);display:none;flex-direction:column;padding:14px;}
+        .editor-overlay.show{display:flex;}
+        .editor-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-shrink:0;}
+        .editor-title{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:#F3F7FC;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .editor-head-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+        .editor-hint{font-size:11px;color:var(--muted);}
+        .editor-ta{flex:1;width:100%;background:var(--sunken);border:1px solid var(--border-4);border-radius:12px;padding:14px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:15px;line-height:1.65;resize:none;outline:none;}
+        .editor-ta:focus{border-color:var(--accent-border);}
         .sheet-hint{font-size:12px;color:var(--icon);line-height:1.5;}
         .duration{text-align:center;font-size:13px;font-weight:600;color:var(--accent);}
         .sheet-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:2px;flex-wrap:wrap;}
@@ -492,7 +506,10 @@
                         <label class="field"><span>End</span><input type="time" class="inp" id="timeEndInput"></label>
                     </div>
                     <div class="duration" id="timeDuration">Duration · —</div>
-                    <textarea class="inp" id="timeNote" rows="2" placeholder="What did you work on?"></textarea>
+                    <div class="ta-wrap">
+                        <textarea class="inp" id="timeNote" rows="3" placeholder="What did you work on?"></textarea>
+                        <button type="button" class="ta-expand" data-target="timeNote" data-title="Work notes" title="Edit full screen"><span class="i">open_in_full</span></button>
+                    </div>
                     <div class="sheet-actions">
                         <button class="btn" id="timeCancel">Cancel</button>
                         <button class="btn" id="timeSkip" style="display:none;">Skip Time</button>
@@ -515,8 +532,11 @@
                         <label class="field"><span>Item</span><select class="inp" id="resItem"></select></label>
                     </div>
                     <div id="emailSection" style="display:none;flex-direction:column;gap:9px;">
-                        <span style="font-size:11px;font-weight:600;color:var(--muted);">Customer email draft — review before sending</span>
-                        <textarea class="inp" id="emailPreview" rows="6"></textarea>
+                        <span style="font-size:11px;font-weight:600;color:var(--muted);">Resolution — the customer-facing summary (emailed if you choose)</span>
+                        <div class="ta-wrap">
+                            <textarea class="inp" id="emailPreview" rows="7"></textarea>
+                            <button type="button" class="ta-expand" data-target="emailPreview" data-title="Customer email" title="Edit full screen"><span class="i">open_in_full</span></button>
+                        </div>
                         <div class="sheet-actions">
                             <button class="btn" id="resolveSkipEmail">Resolve, Don't Email</button>
                             <button class="btn btn-green" id="resolveSendEmail">Send Email &amp; Resolve</button>
@@ -536,6 +556,18 @@
                 <button class="btn btn-primary" id="confirmOk">Confirm</button>
             </div>
         </div>
+    </div>
+
+    <!-- full-screen editor (pops any expandable field out to fill the pod) -->
+    <div class="editor-overlay" id="editorOverlay">
+        <div class="editor-head">
+            <div class="editor-title" id="editorTitle">Edit</div>
+            <div class="editor-head-actions">
+                <span class="editor-hint">Esc to close</span>
+                <button class="btn btn-primary" id="editorDone">Done</button>
+            </div>
+        </div>
+        <textarea class="editor-ta" id="editorTextarea" spellcheck="true"></textarea>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -1262,8 +1294,8 @@
             refreshSubtypes(TICKET.subtype_id, TICKET.item_id);
         }
         function openResolveEmailStep(){
-            resolveStatus.textContent = 'Set the ticket type/subtype and review the email, then resolve. Internal notes'
-                + (resolveState.timeStart ? ' and time' : '') + ' will be saved and the ticket marked resolved.';
+            resolveStatus.textContent = 'This message becomes the ticket Resolution — what the customer sees. Your internal notes'
+                + (resolveState.timeStart ? ' and time' : '') + ' stay technician-only. Set the type/subtype and review, then resolve.';
             buildCategoryPicker();
             emailSection.style.display = 'flex';
             emailPreview.value = resolveState.customerEmail || '';
@@ -1281,7 +1313,7 @@
                 time_start: resolveState.timeStart,
                 time_end: resolveState.timeEnd,
                 send_email: sendEmail,
-                email_text: sendEmail ? emailPreview.value : '',
+                email_text: emailPreview.value,  // the customer-facing resolution; recorded as the Resolution, emailed only when send_email
                 type_id: resType.value ? parseInt(resType.value, 10) : null,
                 subtype_id: resSubtype.value ? parseInt(resSubtype.value, 10) : null,
                 item_id: resItem.value ? parseInt(resItem.value, 10) : null,
@@ -1520,6 +1552,39 @@
             clearTimeout(techTypingTimer);
             techTypingTimer = setTimeout(function(){ sendTyping('stop'); lastTypingSent = 0; }, 3500);
         }
+
+        // ===== Full-screen field editor =====
+        // The Add Time / Resolve sheets have small textareas; a corner button pops
+        // the field out to a full-screen editor bound to the same value. Exits with
+        // the Done button or Escape.
+        const editorOverlay = $('editorOverlay'), editorTitle = $('editorTitle'), editorTextarea = $('editorTextarea'), editorDone = $('editorDone');
+        let editorSource = null;
+        function openEditor(source, title){
+            editorSource = source;
+            editorTitle.textContent = title || 'Edit';
+            editorTextarea.value = source.value;
+            editorOverlay.classList.add('show');
+            editorTextarea.focus();
+            try { editorTextarea.setSelectionRange(editorTextarea.value.length, editorTextarea.value.length); } catch (e) {}
+        }
+        function syncEditor(){ if (editorSource) editorSource.value = editorTextarea.value; }
+        function closeEditor(){
+            syncEditor();
+            editorOverlay.classList.remove('show');
+            const src = editorSource; editorSource = null;
+            if (src) { try { src.focus(); } catch (e) {} }
+        }
+        editorTextarea.addEventListener('input', syncEditor);
+        editorDone.addEventListener('click', closeEditor);
+        document.querySelectorAll('.ta-expand').forEach(function(btn){
+            btn.addEventListener('click', function(){
+                const ta = document.getElementById(btn.getAttribute('data-target'));
+                if (ta) openEditor(ta, btn.getAttribute('data-title'));
+            });
+        });
+        document.addEventListener('keydown', function(e){
+            if (e.key === 'Escape' && editorOverlay.classList.contains('show')) { e.preventDefault(); closeEditor(); }
+        });
 
         // ===== Event listeners =====
         sendBtn.addEventListener('click', sendMessage);
