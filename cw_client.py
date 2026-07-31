@@ -1,7 +1,7 @@
 import asyncio
 import os
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -85,9 +85,12 @@ async def get_ticket(ticket_id: int) -> dict:
         "company_identifier": _nested_field(data, "company", "identifier"),
         "contact_id": _nested_field(data, "contact", "id"),
         "contact_name": _nested_name(data, "contact"),
+        "contact_email": data.get("contactEmailAddress", ""),
+        "contact_phone": data.get("contactPhoneNumber", ""),
         "owner_identifier": _nested_field(data, "owner", "identifier"),
         "owner_name": _nested_name(data, "owner"),
         "resources": data.get("resources", ""),
+        "team": _nested_name(data, "team"),
         "type": _nested_name(data, "type"),
         "type_id": _nested_field(data, "type", "id"),
         "subtype": _nested_name(data, "subType"),
@@ -95,28 +98,112 @@ async def get_ticket(ticket_id: int) -> dict:
         "item": _nested_name(data, "item"),
         "item_id": _nested_field(data, "item", "id"),
         "priority": _nested_name(data, "priority"),
+        "severity": data.get("severity", ""),
+        "impact": data.get("impact", ""),
+        "source": _nested_name(data, "source"),
+        "site_name": data.get("siteName") or _nested_name(data, "site"),
+        # dateEntered is not a top-level ticket field on GET — it lives in _info.
+        "date_entered": data.get("dateEntered") or (data.get("_info") or {}).get("dateEntered", ""),
+        "closed_date": data.get("closedDate", ""),
+        "closed_by": data.get("closedBy", ""),
+        "sla_status": data.get("slaStatus", ""),
+        "date_responded": data.get("dateResponded", ""),
+        "date_resolved": data.get("dateResolved", ""),
+        "budget_hours": data.get("budgetHours"),
+        "actual_hours": data.get("actualHours"),
+        # POST-only in current CW REST — empty on GET; the original description
+        # is the ticket's first Discussion note, which the full note feed carries.
         "initial_description": data.get("initialDescription", ""),
     }
 
 
-async def get_ticket_notes(ticket_id: int) -> list[dict]:
-    response = await _client.get(
-        f"/service/tickets/{ticket_id}/notes",
-        params={"pageSize": 50, "orderBy": "id desc"},
-    )
-    _handle_response(response)
-    notes = response.json()
+# Pagination safety cap: 40 pages * 250 = 10,000 notes/entries per ticket. No
+# real ticket comes close; the cap only guards against a runaway loop.
+_MAX_PAGES = 40
+
+
+async def _get_all_pages(path: str, params: dict, max_pages: int = _MAX_PAGES) -> list[dict]:
+    """Fetch every page of a CW collection endpoint (CW caps pageSize at 1000)."""
+    page_size = params.get("pageSize", 250)
+    items: list[dict] = []
+    page = 1
+    prev_batch = None
+    while page <= max_pages:
+        response = await _client.get(path, params={**params, "page": page})
+        _handle_response(response)
+        batch = response.json()
+        if not isinstance(batch, list) or not batch:
+            break
+        # Guard against an endpoint ignoring the page param (would otherwise
+        # collect _MAX_PAGES copies of page 1).
+        if batch == prev_batch:
+            break
+        prev_batch = batch
+        items.extend(batch)
+        if len(batch) < page_size:
+            break
+        page += 1
+    return items
+
+
+async def get_ticket_notes(ticket_id: int, limit: int | None = None) -> list[dict]:
+    """Ticket notes, newest first. By default fetches EVERY note (all pages) so
+    long tickets aren't silently truncated; pass limit for a cheap single page
+    (e.g. enriching similar tickets)."""
+    if limit:
+        response = await _client.get(
+            f"/service/tickets/{ticket_id}/notes",
+            params={"pageSize": limit, "orderBy": "id desc"},
+        )
+        _handle_response(response)
+        notes = response.json()
+    else:
+        notes = await _get_all_pages(
+            f"/service/tickets/{ticket_id}/notes",
+            {"pageSize": 250, "orderBy": "id desc"},
+        )
 
     return [
         {
             "id": n.get("id"),
             "text": n.get("text", ""),
             "internal": n.get("internalAnalysisFlag", False),
-            "member": _nested_name(n, "member"),
+            "detail": n.get("detailDescriptionFlag", False),
+            "resolution": n.get("resolutionFlag", False),
+            "member": _nested_name(n, "member") or _nested_name(n, "contact"),
             "date": n.get("dateCreated", ""),
         }
         for n in notes
         if n.get("text", "").strip()
+    ]
+
+
+async def get_ticket_time_entries(ticket_id: int) -> list[dict]:
+    """Every time entry logged against a ticket, newest first — the real work
+    log (what was done, by whom, for how long)."""
+    entries = await _get_all_pages(
+        "/time/entries",
+        {
+            "conditions": f'chargeToType="ServiceTicket" AND chargeToId={ticket_id}',
+            "pageSize": 250,
+            "orderBy": "timeStart desc",
+        },
+    )
+
+    return [
+        {
+            "id": e.get("id"),
+            "member": _nested_name(e, "member") or _nested_field(e, "member", "identifier")
+                      or e.get("enteredBy") or "",
+            "time_start": e.get("timeStart", ""),
+            "time_end": e.get("timeEnd", ""),
+            "hours": e.get("actualHours"),
+            "billable": e.get("billableOption", ""),
+            "notes": e.get("notes", "") or "",
+            "internal_notes": e.get("internalNotes", "") or "",
+            "email_sent": bool(e.get("emailContactFlag")),
+        }
+        for e in entries
     ]
 
 
@@ -149,6 +236,34 @@ async def get_ticket_configurations(ticket_id: int) -> list[dict]:
     return [item for item in configurations if item]
 
 
+async def get_ticket_audit_trail(ticket_id: int) -> list[dict]:
+    """The ticket's audit trail (status changes, emails sent, assignments,
+    field edits — who did what, when), newest first."""
+    # Old tickets can accrue enormous audit trails (every field edit / SLA
+    # event); 8 pages = 2,000 entries is plenty and keeps the fetch bounded.
+    entries = await _get_all_pages(
+        "/system/audittrail",
+        {"type": "Ticket", "id": ticket_id, "pageSize": 250},
+        max_pages=8,
+    )
+
+    normalized = [
+        {
+            "text": e.get("text", "") or "",
+            "member": e.get("enteredBy", "") or "",
+            "date": e.get("enteredDate", "") or "",
+            "type": e.get("auditType", "") or e.get("auditSubType", "") or "",
+        }
+        for e in entries
+        if (e.get("text") or "").strip()
+    ]
+    # This endpoint has no orderBy and its ordering is undocumented — sort
+    # newest first ourselves (ISO dates sort lexically) so downstream trimming
+    # keeps the recent end.
+    normalized.sort(key=lambda a: a["date"], reverse=True)
+    return normalized
+
+
 async def search_tickets(conditions: str, page_size: int = 5) -> list[dict]:
     response = await _client.get(
         "/service/tickets",
@@ -171,6 +286,103 @@ async def search_tickets(conditions: str, page_size: int = 5) -> list[dict]:
             "date_entered": t.get("dateEntered", ""),
         }
         for t in tickets
+    ]
+
+
+def quote_literal(value) -> str:
+    """A quoted string literal for a ConnectWise conditions clause.
+
+    ConnectWise has NO escape sequence inside a conditions literal — doubling a
+    quote does not escape it, it ends the string and 400s the whole query. What
+    works is picking the delimiter the value doesn't contain, so a search for
+    "O'Brien" or 'say "hi"' goes through instead of hard-failing the lookup.
+    """
+    text = str(value)
+    if '"' not in text:
+        return f'"{text}"'
+    if "'" not in text:
+        return f"'{text}'"
+    return '"' + text.replace('"', "") + '"'
+
+
+async def find_tickets(
+    keywords: list[str] | None = None,
+    match: str = "any",
+    company_id: int | None = None,
+    company_name: str = "",
+    contact_id: int | None = None,
+    contact_name: str = "",
+    status_name: str = "",
+    board_name: str = "",
+    include_closed: bool = True,
+    days_back: int | None = 365,
+    exclude_ticket_id: int | None = None,
+    limit: int = 8,
+) -> list[dict]:
+    """Structured ticket search across the WHOLE ConnectWise instance.
+
+    Every filter is built here from typed parameters — a caller (including the
+    AI assistant's search tool) never supplies a raw conditions string, so it
+    cannot reach fields it wasn't given or break out of the quoting.
+    """
+    clauses: list[str] = []
+
+    terms = [k.strip() for k in (keywords or []) if k and k.strip()]
+    if terms:
+        joiner = " and " if match == "all" else " or "
+        clauses.append("(" + joiner.join(f"summary contains {quote_literal(t)}" for t in terms) + ")")
+    if company_id:
+        clauses.append(f"company/id = {int(company_id)}")
+    elif company_name:
+        clauses.append(f"company/name contains {quote_literal(company_name)}")
+    if contact_id:
+        clauses.append(f"contact/id = {int(contact_id)}")
+    elif contact_name:
+        clauses.append(f"contact/name contains {quote_literal(contact_name)}")
+    if status_name:
+        # Equality only: `status/name contains` is not a verified operator on
+        # this field, and a rejected condition fails the entire search.
+        clauses.append(f"status/name = {quote_literal(status_name)}")
+    if board_name:
+        clauses.append(f"board/name contains {quote_literal(board_name)}")
+    if not include_closed:
+        clauses.append("closedFlag = false")
+    if days_back:
+        since = datetime.now(timezone.utc) - timedelta(days=int(days_back))
+        clauses.append(f"dateEntered > [{since.strftime('%Y-%m-%dT00:00:00Z')}]")
+    if exclude_ticket_id:
+        clauses.append(f"id != {int(exclude_ticket_id)}")
+
+    # A date window alone is not a search — without something selective this
+    # would just hand back the newest tickets in the instance.
+    selective = bool(terms or company_id or company_name or contact_id
+                     or contact_name or status_name or board_name)
+    if not selective:
+        return []
+
+    response = await _client.get(
+        "/service/tickets",
+        params={
+            "conditions": " and ".join(clauses),
+            "pageSize": max(1, min(int(limit), 25)),
+            "orderBy": "id desc",
+        },
+    )
+    _handle_response(response)
+
+    return [
+        {
+            "id": t.get("id"),
+            "summary": t.get("summary", ""),
+            "status": _nested_name(t, "status"),
+            "board": _nested_name(t, "board"),
+            "company_name": _nested_name(t, "company"),
+            "contact_name": _nested_name(t, "contact"),
+            "priority": _nested_name(t, "priority"),
+            "closed": bool(t.get("closedFlag")),
+            "date_entered": t.get("dateEntered") or (t.get("_info") or {}).get("dateEntered", ""),
+        }
+        for t in response.json()
     ]
 
 
@@ -356,10 +568,64 @@ async def get_board_statuses(board_id: int) -> list[dict]:
         {
             "id": s.get("id"),
             "name": s.get("name", ""),
-            "inactive": s.get("inactiveFlag", False),
+            # The board-status endpoint returns "inactive"; "inactiveFlag" is the
+            # spelling on other CW records. Read both so retired statuses are
+            # actually filtered out instead of silently offered to a technician.
+            "inactive": s.get("inactive", s.get("inactiveFlag", False)),
+            "closed": s.get("closedStatus", False),
+            # Some statuses (Re-Opened, the DNU placeholders) reject time entries
+            # outright — worth knowing before a status change is proposed.
+            "no_time_entry": s.get("timeEntryNotAllowed", False),
         }
         for s in response.json()
     ]
+
+
+def _status_key(name: str) -> str:
+    """Normalize a status name for matching: lowercase, letters/digits only."""
+    return "".join(c for c in (name or "").lower() if c.isalnum())
+
+
+def usable_statuses(statuses: list[dict]) -> list[dict]:
+    """Active statuses a technician would actually pick.
+
+    Real boards carry retired scaffolding — "DNU-*", "AUTOMATED STATUS BELOW (DO
+    NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. None of those should
+    ever reach a status picker or the assistant's list of options.
+    """
+    keep = []
+    for s in statuses:
+        name = (s.get("name") or "").strip().lower()
+        if s.get("inactive") or not name:
+            continue
+        if "automat" in name or "do not use" in name or name.startswith("dnu"):
+            continue
+        keep.append(s)
+    return keep
+
+
+def match_status(statuses: list[dict], wanted: str) -> dict | None:
+    """Best status on a board for a spoken name ("in progress", "waiting on client").
+
+    Exact normalized match first, then prefix, then substring either way — so
+    "in progress" finds "In Progress" and "Working Issue Now > In Progress"
+    without ever guessing between two equally-good candidates.
+    """
+    target = _status_key(wanted)
+    if not target:
+        return None
+    active = usable_statuses(statuses)
+    for test in (
+        lambda k: k == target,
+        lambda k: k.startswith(target),
+        lambda k: target in k,
+        lambda k: k in target,
+    ):
+        hits = [s for s in active if test(_status_key(s.get("name", "")))]
+        if hits:
+            # Shortest name = the least-qualified status matching the phrase.
+            return min(hits, key=lambda s: len(s.get("name") or ""))
+    return None
 
 
 async def set_ticket_status(ticket_id: int, status_id: int) -> dict:
