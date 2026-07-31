@@ -303,6 +303,38 @@
         .editor-hint{font-size:11px;color:var(--muted);}
         .editor-ta{flex:1;width:100%;background:var(--sunken);border:1px solid var(--border-4);border-radius:12px;padding:14px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:15px;line-height:1.65;resize:none;outline:none;}
         .editor-ta:focus{border-color:var(--accent-border);}
+        /* field header with an inline action (Suggest / Redraft) */
+        .field-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+        .field-head > span{font-size:11px;font-weight:600;color:var(--muted);}
+        .mini-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:8px;padding:4px 9px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:color .15s,border-color .15s;}
+        .mini-btn .i{font-size:15px;color:var(--accent);}
+        .mini-btn:hover{border-color:var(--accent-border);color:var(--text);}
+        .mini-btn:disabled{opacity:.45;cursor:not-allowed;}
+        .check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;line-height:1.45;}
+        .check input{width:15px;height:15px;margin-top:1px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+        .check b{color:var(--text);font-weight:600;}
+        .drafting{display:none;align-items:center;gap:6px;font-size:11px;color:var(--accent);}
+        .drafting.show{display:flex;}
+        .drafting .i{font-size:14px;animation:hpulse 1.4s ease-in-out infinite;}
+
+        /* assistant tool activity + proposed-action cards */
+        .tool-strip{display:flex;flex-direction:column;gap:4px;align-self:flex-start;max-width:92%;}
+        .tool-chip{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-2);background:var(--panel-2);border:1px solid var(--border-2);border-radius:8px;padding:5px 10px;}
+        .tool-chip .i{font-size:15px;color:var(--accent);flex-shrink:0;}
+        .action-card{align-self:stretch;background:var(--panel);border:1px solid var(--accent-border);border-radius:12px;padding:12px 13px;display:flex;flex-direction:column;gap:9px;}
+        .action-card.done{border-color:rgba(63,200,115,.5);}
+        .action-card.dismissed{opacity:.6;border-color:var(--border-2);}
+        .ac-head{display:flex;align-items:center;gap:9px;}
+        .ac-icon{width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+        .ac-icon .i{font-size:17px;}
+        .ac-titles{min-width:0;flex:1;}
+        .ac-title{font-size:12.5px;font-weight:600;color:#eaf0f7;}
+        .ac-sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .ac-actions{display:flex;gap:8px;justify-content:flex-end;}
+        .ac-result{display:flex;align-items:center;gap:6px;font-size:12px;color:#8ee6ac;}
+        .ac-result.muted{color:var(--muted);}
+        .ac-result .i{font-size:16px;}
+
         .sheet-hint{font-size:12px;color:var(--icon);line-height:1.5;}
         .duration{text-align:center;font-size:13px;font-weight:600;color:var(--accent);}
         .sheet-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:2px;flex-wrap:wrap;}
@@ -375,6 +407,7 @@
                     <div class="top-sub" id="topSub">Ticket console</div>
                 </div>
                 <div class="top-controls">
+                    <button class="icon-btn" id="popoutBtn" title="Pop out — open Hercules full-screen in a new tab"><span class="i">open_in_new</span></button>
                     <button class="icon-btn sc js-sc" id="scBtn" title="Open this computer in ScreenConnect"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">screen_share</span></button>
                     <button class="icon-btn sc js-sc" id="scBackstageBtn" title="ScreenConnect — Backstage / choose session"{% if not screenconnect_enabled %} disabled{% endif %}><span class="i">terminal</span></button>
                     <div class="model-wrap">
@@ -506,9 +539,27 @@
                         <label class="field"><span>End</span><input type="time" class="inp" id="timeEndInput"></label>
                     </div>
                     <div class="duration" id="timeDuration">Duration · —</div>
-                    <div class="ta-wrap">
-                        <textarea class="inp" id="timeNote" rows="3" placeholder="What did you work on?"></textarea>
-                        <button type="button" class="ta-expand" data-target="timeNote" data-title="Work notes" title="Edit full screen"><span class="i">open_in_full</span></button>
+                    <div class="field">
+                        <div class="field-head">
+                            <span id="timeNoteLabel">Work notes</span>
+                            <button type="button" class="mini-btn" id="timeSuggest" title="Draft this from the ticket and your chat"><span class="i">auto_awesome</span><span id="timeSuggestLabel">Suggest</span></button>
+                        </div>
+                        <div class="ta-wrap">
+                            <textarea class="inp" id="timeNote" rows="4" placeholder="What did you work on?"></textarea>
+                            <button type="button" class="ta-expand" data-target="timeNote" data-title="Work notes" title="Edit full screen"><span class="i">open_in_full</span></button>
+                        </div>
+                        <div class="drafting" id="timeDrafting"><span class="i">auto_awesome</span>Hercules is drafting from the ticket…</div>
+                        <label class="check" id="timeInternalRow"><input type="checkbox" id="timeInternal" checked><span>Also post these notes to the ticket's Internal Analysis</span></label>
+                    </div>
+                    <div class="field" id="timeEmailBlock" style="display:none;">
+                        <label class="check"><input type="checkbox" id="timeEmailToggle"><span>Also email <b id="timeEmailWho">the customer</b> an update</span></label>
+                        <div id="timeEmailBody" style="display:none;flex-direction:column;gap:6px;">
+                            <div class="ta-wrap">
+                                <textarea class="inp" id="timeEmailText" rows="6" placeholder="Update to send the customer…"></textarea>
+                                <button type="button" class="ta-expand" data-target="timeEmailText" data-title="Customer update" title="Edit full screen"><span class="i">open_in_full</span></button>
+                            </div>
+                            <div class="sheet-hint">Sent from the ticket and recorded on it as a Discussion note.</div>
+                        </div>
                     </div>
                     <div class="sheet-actions">
                         <button class="btn" id="timeCancel">Cancel</button>
@@ -590,12 +641,25 @@
         const SCREENCONNECT_ENABLED = {{ screenconnect_enabled | tojson }};
         const LIVE_ACTIVE = {{ live_active | tojson }};
         const POD_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+        // In a top-level tab (pop-out) the URL sits in the address bar and
+        // browser history — scrub the org-wide secret from it. Requests carry
+        // the token via X-Pod-Token / ?token= programmatically from POD_TOKEN.
+        if (window.self === window.top && POD_TOKEN) {
+            try {
+                const u = new URL(window.location.href);
+                u.searchParams.delete('token');
+                history.replaceState(null, '', u.toString());
+            } catch (e) {}
+        }
 
         // ===== State =====
         let messages = [];
         let isStreaming = false;
         let hasNewMessages = false;
         let pendingAttachments = [];
+        // ConnectWise actions Hercules proposed during the current reply; rendered
+        // as editable confirmation cards once the reply finishes streaming.
+        let pendingActions = [];
 
         const MAX_IMAGES_PER_MESSAGE = 4;
         const MAX_TEXT_FILE_BYTES = 51200;
@@ -651,6 +715,9 @@
         const timeSheet = $('timeSheet'), timeSheetTitle = $('timeSheetTitle'), timeHint = $('timeHint');
         const timeMember = $('timeMember'), timeDate = $('timeDate'), timeStartInput = $('timeStartInput'), timeEndInput = $('timeEndInput'), timeDuration = $('timeDuration'), timeNote = $('timeNote');
         const timeCancel = $('timeCancel'), timeSkipBtn = $('timeSkip'), timeSubmitBtn = $('timeSubmit'), timeClose = $('timeClose');
+        const timeNoteLabel = $('timeNoteLabel'), timeSuggestBtn = $('timeSuggest'), timeSuggestLabel = $('timeSuggestLabel'), timeDrafting = $('timeDrafting');
+        const timeInternalRow = $('timeInternalRow'), timeInternal = $('timeInternal');
+        const timeEmailBlock = $('timeEmailBlock'), timeEmailToggle = $('timeEmailToggle'), timeEmailBody = $('timeEmailBody'), timeEmailText = $('timeEmailText'), timeEmailWho = $('timeEmailWho');
         const resolveSheet = $('resolveSheet'), resolveStatus = $('resolveStatus'), resolveClose = $('resolveClose');
         const categorySection = $('categorySection'), resType = $('resType'), resSubtype = $('resSubtype'), resItem = $('resItem');
         const emailSection = $('emailSection'), emailPreview = $('emailPreview');
@@ -891,6 +958,7 @@
             chatInput.value = '';
             chatInput.style.height = 'auto';
             pendingAttachments = [];
+            pendingActions = [];
             renderAttachmentStrip();
 
             messages.push({ role: 'user', content: userContent });
@@ -908,13 +976,16 @@
                         ticket_id: TICKET.id,
                         messages: messages,
                         model: modelSelect.value,
-                        ticket_context: Object.assign({}, TICKET, { notes: NOTES, duplicates: DUPLICATES }),
+                        // The server now pulls the full fresh ticket itself; this
+                        // snapshot is only its fallback, so a slim slice suffices.
+                        ticket_context: Object.assign({}, TICKET, { notes: NOTES.slice(0, 50), duplicates: DUPLICATES }),
                     }),
                 });
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
-                while (true) {
+                let finished = false;   // an error/done frame ends the reply — stop draining
+                while (!finished) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     buffer += decoder.decode(value, { stream: true });
@@ -926,8 +997,17 @@
                         if (!data) continue;
                         try {
                             const parsed = JSON.parse(data);
-                            if (parsed.error) { bubble.className = 'bubble bubble-ai err'; bubble.textContent = parsed.error; break; }
-                            if (parsed.done) break;
+                            if (parsed.error) {
+                                bubble.className = 'bubble bubble-ai err';
+                                bubble.textContent = parsed.error;
+                                finished = true; break;
+                            }
+                            if (parsed.done) { finished = true; break; }
+                            // Hercules looking something up in ConnectWise.
+                            if (parsed.tool) { addToolChip(parsed.tool, bubble); continue; }
+                            // A ConnectWise action it wants to take — shown for
+                            // confirmation once the reply finishes.
+                            if (parsed.action) { pendingActions.push(parsed.action); continue; }
                             if (parsed.content) {
                                 if (!started) { bubble.innerHTML = ''; started = true; }
                                 fullContent += parsed.content;
@@ -936,6 +1016,12 @@
                             }
                         } catch (e) {}
                     }
+                }
+                if (!fullContent && pendingActions.length && !bubble.classList.contains('err')) {
+                    // It went straight to an action card — an empty bubble above
+                    // it would just look like a broken reply.
+                    const row = bubble.parentElement;
+                    if (row) row.remove();
                 }
                 if (fullContent) {
                     messages.push({ role: 'assistant', content: fullContent });
@@ -950,12 +1036,15 @@
                             messages: [ { role: 'user', content: userContent }, { role: 'assistant', content: fullContent } ],
                         }),
                     }).catch(function(){});
-                } else if (!bubble.classList.contains('err')) {
+                } else if (!pendingActions.length && !bubble.classList.contains('err')) {
                     bubble.className = 'bubble bubble-ai err'; bubble.textContent = '[Response interrupted]';
                 }
             } catch (err) {
                 bubble.className = 'bubble bubble-ai err'; bubble.textContent = 'Connection error — try again';
             }
+
+            pendingActions.forEach(renderActionCard);
+            pendingActions = [];
 
             isStreaming = false;
             sendBtn.disabled = false;
@@ -1038,7 +1127,7 @@
         (function renderNotes(){
             const list = $('notesList');
             if (!NOTES || NOTES.length === 0) { list.innerHTML = '<div class="empty-hint">No ticket notes yet.</div>'; return; }
-            NOTES.slice(0, 40).forEach(function(n){
+            function noteCard(n){
                 const card = document.createElement('div'); card.className = 'note-card';
                 const head = document.createElement('div'); head.className = 'note-head';
                 const left = document.createElement('div'); left.style.display = 'flex'; left.style.alignItems = 'center'; left.style.gap = '7px';
@@ -1049,12 +1138,24 @@
                 head.appendChild(left); head.appendChild(when);
                 const body = document.createElement('div'); body.className = 'note-body'; body.textContent = (n.text || '').slice(0, 1200);
                 card.appendChild(head); card.appendChild(body);
-                list.appendChild(card);
-            });
+                return card;
+            }
+            NOTES.slice(0, 40).forEach(function(n){ list.appendChild(noteCard(n)); });
+            if (NOTES.length > 40) {
+                const more = document.createElement('button');
+                more.type = 'button'; more.className = 'setting-btn';
+                more.innerHTML = '<span class="i">unfold_more</span>Show all ' + NOTES.length + ' notes';
+                more.addEventListener('click', function(){
+                    more.remove();
+                    NOTES.slice(40).forEach(function(n){ list.appendChild(noteCard(n)); });
+                });
+                list.appendChild(more);
+            }
         })();
         (function renderHistory(){
             const list = $('historyList');
-            const events = (NOTES || []).slice().reverse();  // oldest first
+            // All notes are loaded now — keep the timeline DOM sane on huge tickets.
+            const events = (NOTES || []).slice().reverse().slice(-150);  // oldest first, newest 150
             if (LIVE_ACTIVE) events.push({ _synthetic: true, member: liveAuthorName(), date: null, text: 'Live chat in progress', live: true });
             if (events.length === 0) { list.innerHTML = '<div class="empty-hint">No activity recorded yet.</div>'; return; }
             events.forEach(function(ev, idx){
@@ -1082,6 +1183,15 @@
             const opt = modelSelect.options[modelSelect.selectedIndex];
             if (opt) $('setModel').textContent = opt.textContent;
         });
+
+        // ===== Pop out (full-screen tab) =====
+        // Inside the CW pod iframe the vertical room is whatever ConnectWise
+        // grants; the pop-out reopens this exact pod URL as a full browser tab.
+        (function(){
+            const btn = $('popoutBtn');
+            if (window.self === window.top) { btn.style.display = 'none'; return; }
+            btn.addEventListener('click', function(){ window.open(window.location.href, '_blank'); });
+        })();
 
         // ===== ScreenConnect =====
         function scButtons(){ return Array.from(document.querySelectorAll('.js-sc')); }
@@ -1157,31 +1267,149 @@
             if (span <= 0) { timeDuration.textContent = 'End must be after start'; return; }
             timeDuration.textContent = 'Duration · ' + span.toFixed(2) + ' hr';
         }
+        // The customer email is only offered when there is somebody to send it to.
+        const HAS_CONTACT = !!(TICKET.contact_id || TICKET.contact_email);
+
         let timeMode = 'add';
-        function openTimeModal(mode){
+        // Tracks the last text Hercules put in a field, so a re-draft can replace
+        // its own suggestion but never overwrite something the tech typed.
+        let lastDraft = { note: '', email: '' };
+        let draftSeq = 0;
+
+        function setEmailSection(open){
+            timeEmailToggle.checked = !!open;
+            timeEmailBody.style.display = open ? 'flex' : 'none';
+        }
+
+        function openTimeModal(mode, prefill){
             timeMode = (mode === 'resolve') ? 'resolve' : 'add';
+            prefill = prefill || {};
             const now = new Date();
-            const start = new Date(now.getTime() - 30 * 60000);
+            // The sheet logs a single day, so the start can't be pushed back past
+            // local midnight — that would make end < start and block saving.
+            const sinceMidnight = now.getHours() * 60 + now.getMinutes();
+            const wanted = Number(prefill.minutes) > 0 ? Number(prefill.minutes) : 30;
+            const minutes = Math.min(wanted, 1440, sinceMidnight);
+            const start = new Date(now.getTime() - minutes * 60000);
             timeDate.value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
             timeStartInput.value = pad2(start.getHours()) + ':' + pad2(start.getMinutes());
             timeEndInput.value = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
             populateMemberPicker();
             updateDuration();
+            lastDraft = { note: '', email: '' };
+            timeEmailText.value = '';
+            setEmailSection(false);
+            timeDrafting.classList.remove('show');
+            draftSeq++;  // any draft still in flight from a previous open is stale
+
             if (timeMode === 'resolve') {
+                // The resolution note was already drafted by /resolve — this step
+                // is only about the time, so no second draft and no second email.
                 timeSheetTitle.textContent = 'Log Time · #' + TICKET.id;
                 timeHint.style.display = 'block';
+                timeNoteLabel.textContent = 'Internal resolution note — technician only';
                 timeNote.value = (resolveState && resolveState.internalNote) || '';
+                timeSuggestBtn.style.display = 'none';
+                timeInternalRow.style.display = 'none';
+                timeEmailBlock.style.display = 'none';
                 timeSkipBtn.style.display = '';
                 timeSubmitBtn.textContent = 'Add Time';
             } else {
                 timeSheetTitle.textContent = 'Add Time · #' + TICKET.id;
                 timeHint.style.display = 'none';
-                timeNote.value = '';
+                timeNoteLabel.textContent = 'Work notes';
+                timeNote.value = prefill.notes || '';
+                timeInternal.checked = true;
+                timeSuggestBtn.style.display = '';
+                timeInternalRow.style.display = '';
+                timeEmailBlock.style.display = HAS_CONTACT ? 'flex' : 'none';
+                timeEmailWho.textContent = TICKET.contact_name || 'the customer';
                 timeSkipBtn.style.display = 'none';
                 timeSubmitBtn.textContent = 'Save Time';
+                setSuggestLabel();
+                // Open with the work note (and a customer update) already drafted
+                // from the chat and the ticket — the tech edits rather than types.
+                requestTimeDrafts({ auto: true, keepNote: !!prefill.notes });
             }
             openTimeSheet();
         }
+
+        function setSuggestLabel(){
+            timeSuggestLabel.textContent = timeNote.value.trim() ? 'Redraft' : 'Suggest';
+        }
+
+        // Only replace a field the tech hasn't taken over: empty, or still holding
+        // the exact text Hercules last put there.
+        function canReplace(field, previous){
+            const current = field.value.trim();
+            return !current || current === (previous || '').trim();
+        }
+
+        async function requestTimeDrafts(opts){
+            opts = opts || {};
+            // Pressing Redraft means "replace this" — but never silently throw
+            // away something the tech typed themselves, in EITHER field, and name
+            // exactly what is about to be replaced.
+            const force = !opts.auto;
+            if (force) {
+                const noteTyped = !canReplace(timeNote, lastDraft.note);
+                const emailTyped = !canReplace(timeEmailText, lastDraft.email);
+                if (noteTyped || emailTyped) {
+                    const what = (noteTyped && emailTyped) ? 'your notes and your customer update'
+                        : (noteTyped ? 'your notes' : 'your customer update');
+                    const ok = await showConfirm('Replace ' + what + ' with a fresh draft from Hercules?');
+                    if (!ok) return;
+                }
+            }
+            const seq = ++draftSeq;
+            timeSuggestBtn.disabled = true;
+            timeDrafting.classList.add('show');
+            let data = null;
+            try {
+                const response = await fetch('/draft-time', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        messages: messages,
+                        model: modelSelect.value,
+                        include_email: HAS_CONTACT,
+                    }),
+                });
+                data = await response.json();
+            } catch (err) { data = null; }
+            if (seq !== draftSeq) return;  // the sheet was reopened — this draft is stale
+            timeSuggestBtn.disabled = false;
+            timeDrafting.classList.remove('show');
+
+            if (!data || !data.success) {
+                // A failed draft must never block logging time — the tech just types.
+                if (!opts.auto) showToast((data && data.error) || 'Could not draft notes', 'error');
+                return;
+            }
+            const note = (data.work_note || '').trim();
+            if (note && !opts.keepNote && (force || canReplace(timeNote, lastDraft.note))) {
+                timeNote.value = note;
+                lastDraft.note = note;
+                pushToEditor(timeNote);
+            }
+            // Still a post-response check on the auto path, so a tech typing
+            // while a draft is in flight wins the race.
+            const email = (data.customer_email || '').trim();
+            if (email && (force || canReplace(timeEmailText, lastDraft.email))) {
+                timeEmailText.value = email;
+                lastDraft.email = email;
+                pushToEditor(timeEmailText);
+            }
+            setSuggestLabel();
+        }
+
+        timeSuggestBtn.addEventListener('click', function(){ requestTimeDrafts({ auto: false }); });
+        timeNote.addEventListener('input', setSuggestLabel);
+        timeEmailToggle.addEventListener('change', function(){
+            setEmailSection(timeEmailToggle.checked);
+            if (timeEmailToggle.checked) timeEmailText.focus();
+        });
         timeMember.addEventListener('change', function(){ if (timeMember.value) { selectedMember = timeMember.value; setStoredMember(selectedMember); } });
         timeDate.addEventListener('change', updateDuration);
         timeStartInput.addEventListener('change', updateDuration);
@@ -1215,20 +1443,41 @@
                 openResolveEmailStep();
                 return;
             }
+            const sendEmail = timeEmailToggle.checked && !!timeEmailText.value.trim();
+            if (sendEmail) {
+                const ok = await showConfirm('Email this update to ' + (TICKET.contact_name || 'the customer') + ' and log the time?');
+                if (!ok) return;
+            }
             timeSubmitBtn.disabled = true; timeSubmitBtn.textContent = 'Saving…';
             try {
                 const response = await fetch('/add-time', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({ ticket_id: TICKET.id, time_start: startISO, time_end: endISO, notes: timeNote.value.trim(), member_identifier: member }),
+                    body: JSON.stringify({
+                        ticket_id: TICKET.id,
+                        time_start: startISO,
+                        time_end: endISO,
+                        notes: timeNote.value.trim(),
+                        member_identifier: member,
+                        add_to_internal: timeInternal.checked,
+                        send_email: sendEmail,
+                        email_text: sendEmail ? timeEmailText.value.trim() : '',
+                    }),
                 });
                 const data = await response.json();
                 if (data.success) {
                     closeTimeSheet();
                     const hrs = (data.actual_hours != null ? data.actual_hours : span);
-                    showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member));
+                    if (data.warning) showBanner(data.warning, 'error');
+                    else showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member) + (data.email_sent ? ' · update emailed' : ''));
                 } else { showToast(data.error || 'Failed to log time', 'error'); }
-            } catch (err) { showToast('Connection error — try again', 'error'); }
+            } catch (err) {
+                // The write may well have landed — saying "try again" would invite
+                // a duplicate time entry and, worse, a second email to the customer.
+                showBanner('Lost the connection while saving to #' + TICKET.id
+                    + '. It may already be logged' + (sendEmail ? ' and emailed' : '')
+                    + ' — check the ticket before saving again.', 'error');
+            }
             timeSubmitBtn.disabled = false; timeSubmitBtn.textContent = 'Save Time';
         });
 
@@ -1246,6 +1495,212 @@
                 });
             } catch (err) {}
             showToast('Note is being saved…');
+        }
+
+        // ===== Assistant lookups + proposed ConnectWise actions =====
+        // Hercules can read other tickets on its own (chips), and can propose
+        // writes to THIS ticket — those arrive as editable cards and reach
+        // ConnectWise only when the tech presses the button.
+        const TOOL_ICONS = { search_tickets: 'travel_explore', get_ticket_details: 'description', list_ticket_statuses: 'flag' };
+        const ACTION_ICONS = {
+            add_internal_note: 'lock', add_discussion_note: 'forum',
+            send_customer_email: 'mail', set_ticket_status: 'flag', log_time: 'schedule',
+        };
+
+        function addToolChip(tool, bubble){
+            const row = bubble.parentElement;
+            if (!row) return;
+            let strip = row.previousElementSibling;
+            if (!strip || !strip.classList.contains('tool-strip')) {
+                strip = document.createElement('div');
+                strip.className = 'tool-strip';
+                aiThread.insertBefore(strip, row);
+            }
+            const chip = document.createElement('div');
+            chip.className = 'tool-chip';
+            const icon = document.createElement('span');
+            icon.className = 'i';
+            icon.textContent = TOOL_ICONS[tool.name] || 'travel_explore';
+            const label = document.createElement('span');
+            label.textContent = tool.label || 'Checking ConnectWise';
+            chip.appendChild(icon); chip.appendChild(label);
+            strip.appendChild(chip);
+            scrollThread(aiThread);
+        }
+
+        let statusOptions = null;
+        async function loadStatusOptions(){
+            // An empty result means the fetch failed — don't cache that, retry.
+            if (statusOptions && statusOptions.length) return statusOptions;
+            try {
+                const r = await fetch('/statuses?ticketId=' + encodeURIComponent(TICKET.id), { headers: { 'X-Pod-Token': POD_TOKEN } });
+                const d = await r.json();
+                statusOptions = (d && d.statuses) || [];
+            } catch (e) { statusOptions = []; }
+            return statusOptions;
+        }
+
+        // The outcome is folded into the last assistant message rather than
+        // pushed as a new one, so the user/assistant turns stay alternating for
+        // every provider. In-memory only — ConnectWise itself is the record.
+        function recordActionOutcome(text){
+            const last = messages[messages.length - 1];
+            if (last && last.role === 'assistant' && typeof last.content === 'string') last.content += '\n\n' + text;
+            else messages.push({ role: 'assistant', content: text });
+        }
+
+        // At most one un-confirmed card per action type: if Hercules proposes the
+        // same kind of write again, the older draft is superseded rather than
+        // leaving two live confirm buttons that would both write.
+        const liveActionCards = {};
+
+        function renderActionCard(a){
+            clearWelcome(aiThread);
+            const superseded = liveActionCards[a.action];
+            if (superseded && superseded.isConnected) superseded.remove();
+            const card = document.createElement('div');
+            card.className = 'action-card';
+            liveActionCards[a.action] = card;
+
+            const head = document.createElement('div'); head.className = 'ac-head';
+            const badge = document.createElement('div'); badge.className = 'ac-icon';
+            const badgeIcon = document.createElement('span'); badgeIcon.className = 'i';
+            badgeIcon.textContent = ACTION_ICONS[a.action] || 'bolt';
+            badge.appendChild(badgeIcon);
+            const titles = document.createElement('div'); titles.className = 'ac-titles';
+            const title = document.createElement('div'); title.className = 'ac-title'; title.textContent = a.title || 'Proposed action';
+            const sub = document.createElement('div'); sub.className = 'ac-sub'; sub.textContent = a.subtitle || '';
+            titles.appendChild(title); titles.appendChild(sub);
+            head.appendChild(badge); head.appendChild(titles);
+            card.appendChild(head);
+
+            let field = null;
+            if (a.action === 'set_ticket_status') {
+                field = document.createElement('select');
+                field.className = 'inp';
+                const only = document.createElement('option');
+                only.value = a.status_name || ''; only.textContent = a.status_name || 'Loading statuses…';
+                field.appendChild(only);
+                card.appendChild(field);
+                loadStatusOptions().then(function(list){
+                    if (!list.length || field.disabled) return;  // already confirmed, or nothing to offer
+                    const want = (a.status_name || '').toLowerCase();
+                    const hit = list.find(function(n){ return n.toLowerCase() === want; })
+                        || list.find(function(n){ return want && n.toLowerCase().indexOf(want) === 0; })
+                        || list.find(function(n){ return want && n.toLowerCase().indexOf(want) >= 0; });
+                    field.innerHTML = '';
+                    if (!hit) {
+                        // The proposed status isn't on this board. Never quietly
+                        // substitute another one — make the tech choose.
+                        const ph = document.createElement('option');
+                        ph.value = ''; ph.textContent = a.status_name
+                            ? '“' + a.status_name + '” isn\'t on this board — pick one'
+                            : 'Pick a status…';
+                        field.appendChild(ph);
+                        sub.textContent = 'Currently ' + (TICKET.status || 'unknown') + ' · choose the status to apply';
+                    }
+                    list.forEach(function(name){
+                        const o = document.createElement('option'); o.value = name; o.textContent = name; field.appendChild(o);
+                    });
+                    field.value = hit || '';
+                });
+            } else if (a.action !== 'log_time') {
+                const wrap = document.createElement('div'); wrap.className = 'ta-wrap';
+                field = document.createElement('textarea');
+                field.className = 'inp';
+                field.rows = Math.max(4, Math.min(14, String(a.text || '').split('\n').length + 1));
+                field.value = a.text || '';
+                field.placeholder = a.placeholder || '';
+                const expand = document.createElement('button');
+                expand.type = 'button'; expand.className = 'ta-expand'; expand.title = 'Edit full screen';
+                expand.innerHTML = '<span class="i">open_in_full</span>';
+                expand.addEventListener('click', function(){ openEditor(field, a.title || 'Edit'); });
+                wrap.appendChild(field); wrap.appendChild(expand);
+                card.appendChild(wrap);
+            } else if (a.text) {
+                const preview = document.createElement('div');
+                preview.className = 'note-body';
+                preview.textContent = a.text;
+                card.appendChild(preview);
+            }
+
+            const actions = document.createElement('div'); actions.className = 'ac-actions';
+            const dismissBtn = document.createElement('button');
+            dismissBtn.type = 'button'; dismissBtn.className = 'btn'; dismissBtn.textContent = 'Dismiss';
+            const confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button';
+            confirmBtn.className = 'btn ' + (a.action === 'send_customer_email' ? 'btn-green' : 'btn-primary');
+            confirmBtn.textContent = a.confirm_label || 'Confirm';
+            actions.appendChild(dismissBtn); actions.appendChild(confirmBtn);
+            card.appendChild(actions);
+
+            function settle(state, text){
+                card.classList.add(state === 'done' ? 'done' : 'dismissed');
+                if (liveActionCards[a.action] === card) delete liveActionCards[a.action];
+                actions.remove();
+                if (field) field.disabled = true;
+                const result = document.createElement('div');
+                result.className = 'ac-result' + (state === 'done' ? '' : ' muted');
+                const icon = document.createElement('span'); icon.className = 'i';
+                icon.textContent = state === 'done' ? 'check_circle' : 'cancel';
+                const label = document.createElement('span'); label.textContent = text;
+                result.appendChild(icon); result.appendChild(label);
+                card.appendChild(result);
+                scrollThread(aiThread);
+            }
+
+            dismissBtn.addEventListener('click', function(){
+                settle('dismissed', 'Dismissed — nothing was written to ConnectWise.');
+                recordActionOutcome('[The technician dismissed the proposed ' + (a.title || a.action)
+                    + '. Nothing was written. Do not propose it again unless they ask.]');
+            });
+
+            confirmBtn.addEventListener('click', async function(){
+                if (a.action === 'log_time') {
+                    openTimeModal('add', { notes: a.text, minutes: a.minutes });
+                    settle('done', 'Opened the time entry form.');
+                    return;
+                }
+                const value = field ? String(field.value || '').trim() : '';
+                if (!value) {
+                    showToast(a.action === 'set_ticket_status'
+                        ? 'Pick a status from the list first' : 'Nothing to save — the draft is empty', 'error');
+                    return;
+                }
+                if (a.action === 'send_customer_email') {
+                    const ok = await showConfirm('Send this email to ' + (TICKET.contact_name || 'the customer') + '?');
+                    if (!ok) return;
+                }
+                const original = confirmBtn.textContent;
+                confirmBtn.disabled = true; dismissBtn.disabled = true; confirmBtn.textContent = 'Working…';
+                try {
+                    const response = await fetch('/action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                        body: JSON.stringify({
+                            ticket_id: TICKET.id,
+                            action: a.action,
+                            text: a.action === 'set_ticket_status' ? '' : value,
+                            status_name: a.action === 'set_ticket_status' ? value : '',
+                            member_identifier: selectedMember || null,
+                        }),
+                    });
+                    const data = await response.json();
+                    if (data && data.success) {
+                        settle('done', data.message || 'Done');
+                        recordActionOutcome('[Done — ' + (data.message || a.action) + ']');
+                    } else {
+                        confirmBtn.disabled = false; dismissBtn.disabled = false; confirmBtn.textContent = original;
+                        showToast((data && data.error) || 'ConnectWise rejected that', 'error');
+                    }
+                } catch (err) {
+                    confirmBtn.disabled = false; dismissBtn.disabled = false; confirmBtn.textContent = original;
+                    showToast('Connection error — try again', 'error');
+                }
+            });
+
+            aiThread.appendChild(card);
+            scrollThread(aiThread);
         }
 
         // ===== Resolve (multi-step) =====
@@ -1568,6 +2023,9 @@
             try { editorTextarea.setSelectionRange(editorTextarea.value.length, editorTextarea.value.length); } catch (e) {}
         }
         function syncEditor(){ if (editorSource) editorSource.value = editorTextarea.value; }
+        // A draft that lands while the full-screen editor is open has to reach
+        // the editor too, or the next keystroke writes the stale value back.
+        function pushToEditor(field){ if (editorSource === field) editorTextarea.value = field.value; }
         function closeEditor(){
             syncEditor();
             editorOverlay.classList.remove('show');

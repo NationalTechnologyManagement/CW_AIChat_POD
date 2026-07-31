@@ -35,7 +35,7 @@ MODEL_SLOTS = [
 
 MODELS_TTL_SECONDS = 6 * 3600
 
-_models_cache: dict = {"models": [], "ids": set(), "fetched_at": 0.0}
+_models_cache: dict = {"models": [], "ids": set(), "no_tool_ids": set(), "fetched_at": 0.0}
 
 
 async def refresh_models() -> None:
@@ -55,6 +55,7 @@ async def refresh_models() -> None:
     ]
 
     models = []
+    no_tools = set()
     for pattern in MODEL_SLOTS:
         candidates = [m for m in vision_models if pattern.match(m["id"])]
         if not candidates:
@@ -63,12 +64,19 @@ async def refresh_models() -> None:
         # OpenRouter names look like "Anthropic: Claude Opus 4.8" — drop the vendor prefix
         label = (newest.get("name") or newest["id"]).split(": ", 1)[-1]
         models.append({"id": newest["id"], "label": label})
+        # Only a catalog row that lists its parameters AND omits "tools" counts
+        # as a refusal. A row with no parameter list at all is unknown, not no.
+        supported = newest.get("supported_parameters")
+        if supported and "tools" not in supported:
+            no_tools.add(newest["id"])
 
     if models:
         _models_cache["models"] = models
         _models_cache["ids"] = {m["id"] for m in models}
+        _models_cache["no_tool_ids"] = no_tools
         _models_cache["fetched_at"] = time.time()
-        print(f"[models] Refreshed: {[m['id'] for m in models]}")
+        print(f"[models] Refreshed: {[m['id'] for m in models]}"
+              + (f" (no tool support: {sorted(no_tools)})" if no_tools else ""))
 
 
 async def get_models() -> list[dict]:
@@ -80,6 +88,16 @@ async def get_models() -> list[dict]:
 
 def is_model_allowed(model_id: str) -> bool:
     return model_id in _models_cache["ids"] or any(m["id"] == model_id for m in FALLBACK_MODELS)
+
+
+def model_supports_tools(model_id: str) -> bool:
+    """Whether this model can use ConnectWise tools.
+
+    Fail open: only a catalog entry that explicitly lists its parameters without
+    "tools" is treated as a no. Silently dropping the tools is worse than trying
+    them — it puts Hercules back to insisting it can't see other tickets.
+    """
+    return model_id not in _models_cache["no_tool_ids"]
 
 
 def content_to_text(content) -> str:
@@ -111,31 +129,81 @@ def _headers() -> dict:
     }
 
 
+def _accumulate_tool_call(calls: dict, tc: dict) -> None:
+    """Fold one streamed tool-call delta into the accumulator, keyed by index.
+
+    The wire protocol sends `id` and `function.name` once, on the first delta
+    for an index, then `function.arguments` in fragments. So the name is
+    ASSIGNED and the arguments are strictly CONCATENATED — anything cleverer
+    (skipping a fragment that repeats the accumulated tail, say) silently
+    corrupts JSON like {"text":"Hello""} where a lone quote is a real fragment.
+    """
+    index = tc.get("index")
+    if not isinstance(index, int):
+        call_id = tc.get("id")
+        if call_id:
+            index = next((i for i, c in calls.items() if c["id"] == call_id), len(calls))
+        else:
+            # No index and no id: this is a continuation of the call in flight,
+            # not a new one — starting a fresh slot would strand the fragment.
+            index = max(calls) if calls else 0
+    slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+    if tc.get("id"):
+        slot["id"] = tc["id"]
+    function = tc.get("function") or {}
+    if function.get("name"):
+        slot["name"] = function["name"]
+    if isinstance(function.get("arguments"), str):
+        slot["arguments"] += function["arguments"]
+
+
 async def stream_chat(
     messages: list[dict],
     model: str,
-    system_prompt: str,
-) -> AsyncGenerator[str, None]:
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    system_prompt: str | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
+    max_tokens: int = 2048,
+) -> AsyncGenerator[dict, None]:
+    """Stream one model turn, yielding events:
+
+        {"content": "..."}      a text delta, as it arrives
+        {"tool_calls": [...]}   the turn ended asking for tools (accumulated,
+                                each {id, name, arguments}) — emitted once
+        {"error": "..."}        terminal; nothing else follows
+        {"done": True}          the turn finished cleanly
+
+    The caller decides what to do with tool calls; this function never executes
+    anything. `tools` must be resent on every round of a tool conversation —
+    pass tool_choice="none" to hand control back rather than dropping them.
+    """
+    full_messages = list(messages)
+    if system_prompt:
+        full_messages = [{"role": "system", "content": system_prompt}] + full_messages
+
+    payload = {
+        "model": model,
+        "messages": full_messages,
+        "stream": True,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice
+
+    calls: dict[int, dict] = {}
+    finish_reason = None
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             async with client.stream(
-                "POST",
-                OPENROUTER_URL,
-                headers=_headers(),
-                json={
-                    "model": model,
-                    "messages": full_messages,
-                    "stream": True,
-                    "max_tokens": 2048,
-                },
+                "POST", OPENROUTER_URL, headers=_headers(), json=payload,
             ) as response:
                 if response.status_code == 402:
-                    yield json.dumps({"error": "OpenRouter credits exhausted — check your account balance"})
+                    yield {"error": "OpenRouter credits exhausted — check your account balance"}
                     return
                 if response.status_code == 429:
-                    yield json.dumps({"error": "Rate limited — try again in a moment"})
+                    yield {"error": "Rate limited — try again in a moment"}
                     return
                 if response.status_code >= 400:
                     body = await response.aread()
@@ -148,7 +216,7 @@ async def stream_chat(
                     message = f"AI service error ({response.status_code})"
                     if detail:
                         message += f": {detail}"
-                    yield json.dumps({"error": message})
+                    yield {"error": message}
                     return
 
                 async for line in response.aiter_lines():
@@ -156,24 +224,64 @@ async def stream_chat(
                         continue
                     data = line[6:]
                     if data.strip() == "[DONE]":
-                        yield json.dumps({"done": True})
-                        return
+                        break
                     try:
                         chunk = json.loads(data)
-                        content = (
-                            chunk.get("choices", [{}])[0]
-                            .get("delta", {})
-                            .get("content", "")
-                        )
-                        if content:
-                            yield json.dumps({"content": content})
                     except json.JSONDecodeError:
                         continue
+                    # A provider failing mid-stream still returns HTTP 200 — the
+                    # error rides in the chunk, so it has to be checked here or
+                    # the tech just sees the answer stop.
+                    if chunk.get("error"):
+                        detail = chunk["error"].get("message") if isinstance(chunk["error"], dict) else str(chunk["error"])
+                        print(f"[chat] mid-stream error: {detail!r}")
+                        yield {"error": f"AI service error: {str(detail)[:180]}"}
+                        return
+                    # The final usage chunk carries an empty choices list.
+                    choice = (chunk.get("choices") or [{}])[0]
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+                    # Streaming sends "delta"; a provider that answers a stream
+                    # request in one shot sends "message" instead.
+                    delta = choice.get("delta") or choice.get("message") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield {"content": content}
+                    for tc in (delta.get("tool_calls") or []):
+                        _accumulate_tool_call(calls, tc)
 
         except httpx.ReadTimeout:
-            yield json.dumps({"error": "Response timed out — try again"})
+            yield {"error": "Response timed out — try again"}
+            return
         except httpx.ConnectError:
-            yield json.dumps({"error": "Could not connect to AI service"})
+            yield {"error": "Could not connect to AI service"}
+            return
+        except httpx.HTTPError as e:
+            print(f"[chat] stream failed: {e!r}")
+            yield {"error": "Connection to the AI service dropped — try again"}
+            return
+
+    if finish_reason == "length" and calls:
+        # Truncated mid-arguments: the JSON is unparseable and "acting" on it
+        # would mean acting on a half-written note. Fail loudly instead.
+        yield {"error": "The response was cut off before the action was fully written — try again."}
+        return
+    if calls:
+        finished, seen_ids = [], set()
+        for i in sorted(calls):
+            call = calls[i]
+            if not call["name"]:
+                continue
+            # Each call is answered by id, so they have to be present and
+            # distinct — synthesize one when a provider omits or repeats it.
+            if not call["id"] or call["id"] in seen_ids:
+                call["id"] = f"tc_{i}"
+            seen_ids.add(call["id"])
+            call["arguments"] = call["arguments"].strip() or "{}"
+            finished.append(call)
+        if finished:
+            yield {"tool_calls": finished}
+    yield {"done": True, "finish_reason": finish_reason}
 
 
 async def summarize_chat(messages: list[dict], model: str) -> str:
@@ -330,13 +438,61 @@ async def generate_internal_resolution_note(source_text: str, model: str) -> str
     )
 
 
+async def generate_time_entry_note(source_text: str, model: str, ticket_summary: str) -> str:
+    """The technician's work note for a time entry — what they actually did.
+
+    Shorter and plainer than a resolution note: it lands in the time entry (and
+    the ticket's Internal Analysis), where the next tech reads it as the work
+    log. No headers, no template — just the work.
+    """
+    system_prompt = (
+        "You write the work note a technician puts on a ConnectWise time entry at an MSP. "
+        "From the source material (a technician's chat with an AI assistant, or the ticket's "
+        "own notes), write the note describing the work THIS technician just did.\n\n"
+        "Rules:\n"
+        "- 1-4 short bullet points, or two plain sentences — nothing longer\n"
+        "- Past tense, factual, technician voice ('Rebuilt the Outlook profile...')\n"
+        "- Include the specifics another tech would need: what was checked, what was changed, "
+        "commands run, error messages, the outcome\n"
+        "- If the issue is not finished, end with the current state / what is next\n"
+        "- No headers, no labels, no '[AI Analysis]' banner, no conversational filler\n"
+        "- Do not invent work that is not in the source material. If the source shows only "
+        "discussion and no action taken, describe the investigation instead\n"
+        "- Output ONLY the note text"
+    )
+
+    return await _call_openrouter(
+        system_prompt,
+        f"Ticket: {ticket_summary}\n\nSource material:\n\n{source_text}",
+        model,
+        max_tokens=500,
+    )
+
+
 async def generate_customer_email(
-    source_text: str, model: str, ticket_summary: str, contact_name: str
+    source_text: str, model: str, ticket_summary: str, contact_name: str,
+    purpose: str = "resolution",
 ) -> str:
+    """A customer-facing email body.
+
+    purpose="resolution" summarizes a completed fix (used by Resolve);
+    purpose="update" is a mid-ticket progress note that must NOT claim the issue
+    is finished (used by Add Time).
+    """
+    if purpose == "update":
+        intent = (
+            "write a short progress update to the customer on work that is STILL IN PROGRESS.\n\n"
+            "- Never say the issue is resolved, fixed, or closed — this is an update, not a resolution\n"
+            "- Say what has been done so far and what happens next\n"
+            "- If something is needed from the customer, ask for it plainly in one line\n\n"
+        )
+    else:
+        intent = "write a clean email to the customer summarizing what was done.\n\n"
+
     system_prompt = (
         "You are writing a professional customer-facing email for an MSP (managed IT services provider). "
         "Based on the source material below (a technician chat OR raw internal ticket notes), "
-        "write a clean email to the customer summarizing what was done.\n\n"
+        + intent +
         "STRICT RULES — VIOLATING THESE IS UNACCEPTABLE:\n"
         "- NEVER mention pricing, costs, billing, fees, or charges\n"
         "- NEVER admit fault, wrongdoing, or blame anyone\n"
