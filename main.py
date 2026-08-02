@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from sse_starlette.sse import EventSourceResponse
 
+import call_bus
 import cw_client
 import cw_tools
 import db
@@ -37,6 +38,12 @@ CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 RESOLVE_STATUS_NAME = os.getenv("RESOLVE_STATUS_NAME", "Resolved")
 # Shared secret for the server-to-server live-chat bridge (Hercules -> /live/history).
 LIVE_BRIDGE_SECRET = os.getenv("LIVE_BRIDGE_SECRET", "")
+# Shared secret for the voice agent's call-transcript bridge (ntm-voice-agent ->
+# /call/ingest). DELIBERATELY NOT LIVE_BRIDGE_SECRET: the customer-facing widget
+# service already holds that one, and reusing it would let it write transcripts.
+# Unset means /call/ingest rejects everything (fail closed) rather than accepting
+# anonymous writes — see _call_bridge_authorized.
+CALL_BRIDGE_SECRET = os.getenv("CALL_BRIDGE_SECRET", "")
 # A live session left 'active' (tech closed the tab without ending) is treated as
 # stale after this long, so it doesn't silently re-open live mode on reload.
 LIVE_SESSION_TTL_SECONDS = int(os.getenv("LIVE_SESSION_TTL_SECONDS", "21600"))  # 6h
@@ -47,9 +54,17 @@ async def lifespan(app: FastAPI):
     screenconnect_client.init_client()
     await db.init_pool()
     await live.init_live()
+    await call_bus.start()
+    _start_call_purge()
     await openrouter_client.refresh_models()
     yield
+    # Call-transcript background work first: both the purge sweep and any
+    # in-flight summarisation talk to Postgres, so they have to be done before
+    # db.close_pool() below.
+    await _stop_call_purge()
+    await _drain_call_summaries()
     await screenconnect_client.close_client()
+    await call_bus.stop()
     await live.close_live()
     await db.close_pool()
     await cw_client.close_client()
@@ -73,9 +88,11 @@ templates = Jinja2Templates(directory="templates")
 
 @app.middleware("http")
 async def auth_and_headers(request: Request, call_next):
-    # /health is public; /live/history is a server-to-server bridge call that
-    # authenticates with LIVE_BRIDGE_SECRET inside the handler instead of POD_SECRET.
-    if request.url.path not in ("/health", "/live/history"):
+    # /health is public; /live/history and /call/ingest are server-to-server
+    # bridge calls that authenticate inside the handler with their own shared
+    # secret (LIVE_BRIDGE_SECRET / CALL_BRIDGE_SECRET) instead of POD_SECRET.
+    # Note /call/history is NOT here — it is a pod endpoint and keeps POD_SECRET.
+    if request.url.path not in ("/health", "/live/history", "/call/ingest"):
         token = request.query_params.get("token") or request.headers.get("X-Pod-Token") or ""
         if not hmac.compare_digest(token.encode(), POD_SECRET.encode()):
             # A refreshed pop-out tab lands here (its URL was scrubbed of the
@@ -1251,13 +1268,18 @@ async def _ticket_source_material(ticket_id: int, messages: list[dict]) -> tuple
     The tech's chat is the source when there is one; otherwise the ticket's own
     notes and work log are, so drafting works even on a ticket nobody chatted
     about. A failed note fetch raises rather than quietly drafting from nothing.
+
+    Either way, any phone call transcribed onto this ticket is appended (see
+    _with_call_material). That happens on BOTH branches on purpose: the chat
+    branch returns early and is the common case, so appending only to the
+    ticket-notes branch below would never fire for a tech who chatted.
     """
     if messages:
         ticket = await cw_client.get_ticket(ticket_id)
         source_text = "\n".join(
             f"{m['role'].upper()}: {openrouter_client.content_to_text(m['content'])}" for m in messages
         )
-        return ticket, source_text, True
+        return ticket, await _with_call_material(ticket_id, source_text), True
 
     full = await _full_ticket_context(ticket_id)
     if "notes" in full["failed"]:
@@ -1285,7 +1307,7 @@ async def _ticket_source_material(ticket_id: int, messages: list[dict]) -> tuple
     if time_lines:
         lines.append("Time Entries / work log (chronological, oldest first):")
         lines.append(_fit_newest(time_lines, 20_000, "time entries"))
-    return ticket, "\n".join(lines), False
+    return ticket, await _with_call_material(ticket_id, "\n".join(lines)), False
 
 
 class DraftTimeRequest(BaseModel):
@@ -1914,3 +1936,541 @@ async def live_ws(websocket: WebSocket):
         # to landing on the ticket instead of an unwatched live channel.
         if not live.has_clients(ticket_id) and await _live_active(ticket_id):
             _schedule_auto_end(ticket_id, member)
+
+
+# =============================================================================
+# Call transcripts
+# =============================================================================
+# A technician's phone call, transcribed by the voice agent (ntm-voice-agent)
+# and forked into Hercules. This is INTERNAL-ONLY material and is kept away from
+# the live-chat path on purpose, in two places:
+#
+#   * its own Redis channel, call:ticket:<id>, owned by call_bus.py. The
+#     customer-facing widget service psubscribes live:ticket:* and forwards every
+#     envelope it sees straight to the customer's browser with no allowlist, so a
+#     single transcript envelope on that channel would stream a technician's
+#     private call to the caller. Nothing here ever touches live.publish.
+#   * its own shared secret, CALL_BRIDGE_SECRET (never LIVE_BRIDGE_SECRET, which
+#     that same customer-facing service already holds).
+#
+# Transcripts live only in this Postgres, for CALL_RETENTION_DAYS, then are
+# deleted by the purge sweep below. The derived ConnectWise note is permanent.
+
+CALL_SUMMARY_MODEL = os.getenv("CALL_SUMMARY_MODEL", "anthropic/claude-haiku-4.5")
+# A final ingest can still be in flight when the 'ended' one lands; wait a beat
+# so the summary is written from the whole call, not all-but-the-last-sentence.
+CALL_SUMMARY_SETTLE_SECONDS = float(os.getenv("CALL_SUMMARY_SETTLE_SECONDS", "1.5"))
+CALL_RETENTION_DAYS = int(os.getenv("CALL_RETENTION_DAYS", "60"))
+CALL_PURGE_INTERVAL_SECONDS = int(os.getenv("CALL_PURGE_INTERVAL_SECONDS", str(24 * 60 * 60)))
+# db.py opens a connection per query, so hydrating transcripts is one connection
+# per call. A ticket realistically has a handful; this is a backstop.
+CALL_HISTORY_MAX_CALLS = int(os.getenv("CALL_HISTORY_MAX_CALLS", "20"))
+# How much call material may be fed into a draft, and from how many calls.
+CALL_MATERIAL_BUDGET = int(os.getenv("CALL_MATERIAL_BUDGET", "40000"))
+CALL_MATERIAL_MAX_CALLS = int(os.getenv("CALL_MATERIAL_MAX_CALLS", "3"))
+
+_SUMMARY_DONE_STATES = ("ready", "posted")
+
+
+def _call_bridge_authorized(request: Request) -> bool:
+    """Constant-time check of the call-bridge secret, from X-Call-Secret or a
+    bearer token. Fails closed when CALL_BRIDGE_SECRET is unset, so an
+    unconfigured deploy rejects writes instead of accepting anonymous ones."""
+    if not CALL_BRIDGE_SECRET:
+        return False
+    supplied = request.headers.get("X-Call-Secret", "") or ""
+    if not supplied:
+        auth = request.headers.get("Authorization", "") or ""
+        if auth[:7].lower() == "bearer ":
+            supplied = auth[7:].strip()
+    return hmac.compare_digest(supplied.encode(), CALL_BRIDGE_SECRET.encode())
+
+
+class CallSegmentIn(BaseModel):
+    id: str
+    seq: int
+    speaker: str
+    text: str
+    spoken_at: str
+
+    @field_validator("speaker")
+    @classmethod
+    def speaker_must_be_known(cls, v):
+        v = (v or "").strip().lower()
+        if v not in ("customer", "technician"):
+            raise ValueError("speaker must be 'customer' or 'technician'")
+        return v
+
+
+class CallIngestRequest(BaseModel):
+    call_key: str
+    ticket_id: int | None = None
+    caller_number: str | None = None
+    contact_id: int | None = None
+    company_id: int | None = None
+    tech_identifier: str | None = None
+    tech_name: str | None = None
+    segments: list[CallSegmentIn] = []
+    ended: bool = False
+    talk_seconds: int | None = None
+    disposition: str | None = None
+
+
+@app.post("/call/ingest")
+async def call_ingest(request: Request, payload: CallIngestRequest):
+    """The voice agent hands over a batch of transcript segments.
+
+    Authenticated with CALL_BRIDGE_SECRET inside the handler (this path is exempt
+    from POD_SECRET). Idempotent by segment id, so a retried batch is a no-op
+    that returns inserted: 0 rather than an error — the sender drops on failure
+    to protect the phone call, so this must never punish a duplicate.
+    """
+    if not _call_bridge_authorized(request):
+        return JSONResponse(status_code=403, content={"error": "Unauthorized"})
+
+    call_key = (payload.call_key or "").strip()
+    if not call_key:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "call_key is required"})
+
+    ticket_id = payload.ticket_id
+
+    # Only send columns the caller actually supplied: a later batch that omits
+    # ticket_id (a call can start before the ticket exists) must not blank out
+    # what an earlier batch already established.
+    fields: dict = {}
+    for name, value in (
+        ("ticket_id", ticket_id),
+        ("caller_number", payload.caller_number),
+        ("contact_id", payload.contact_id),
+        ("company_id", payload.company_id),
+        ("tech_identifier", payload.tech_identifier),
+        ("tech_name", payload.tech_name),
+        ("talk_seconds", payload.talk_seconds),
+        ("disposition", payload.disposition),
+    ):
+        if value is not None:
+            fields[name] = value
+    if payload.ended:
+        fields["ended_at"] = _now_iso()
+
+    # The session row has to exist before its segments — they reference it.
+    try:
+        await db.upsert_call_session(call_key, **fields)
+    except Exception as e:
+        print(f"[call-ingest] session upsert failed for {call_key}: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": "session upsert failed"})
+
+    # Order by seq and drop in-batch duplicates before hitting the DB.
+    segments, seen_ids = [], set()
+    for seg in sorted(payload.segments, key=lambda s: s.seq):
+        if seg.id in seen_ids:
+            continue
+        seen_ids.add(seg.id)
+        segments.append({
+            "id": seg.id,
+            "seq": seg.seq,
+            "speaker": seg.speaker,
+            "text": seg.text,
+            "spoken_at": seg.spoken_at,
+        })
+
+    inserted = 0
+    if segments:
+        try:
+            inserted = await db.save_call_segments(call_key, segments)
+        except Exception as e:
+            print(f"[call-ingest] persist failed for {call_key}: {e}")
+            return JSONResponse(status_code=500, content={"ok": False, "error": "persist failed"})
+
+    # save_call_segments reports how many rows it won, not which. Segments are
+    # monotonic in seq and a retry re-sends an overlapping PREFIX, so the rows
+    # just won are the last `inserted` of the batch. Fan-out is best effort
+    # either way: the pod dedupes by segment id, so an over-publish is invisible
+    # on screen and an under-publish self-heals on the next reconnect backlog.
+    new_segments = segments[len(segments) - inserted:] if inserted else []
+    for seg in new_segments:
+        try:
+            await call_bus.publish_segment(ticket_id, {
+                "kind": "segment",
+                "ticketId": ticket_id,
+                "callKey": call_key,
+                "id": seg["id"],
+                "seq": seg["seq"],
+                "speaker": seg["speaker"],
+                "text": seg["text"],
+                "spokenAt": seg["spoken_at"],
+                "techIdentifier": payload.tech_identifier,
+                "techName": payload.tech_name,
+            })
+        except Exception as e:
+            print(f"[call-ingest] publish failed for {call_key} seq {seg['seq']}: {e}")
+
+    if payload.ended:
+        try:
+            await call_bus.publish_segment(ticket_id, {
+                "kind": "call_end",
+                "ticketId": ticket_id,
+                "callKey": call_key,
+                "talkSeconds": payload.talk_seconds,
+                "disposition": payload.disposition,
+                "ts": _now_iso(),
+            })
+        except Exception as e:
+            print(f"[call-ingest] call_end publish failed for {call_key}: {e}")
+        # Summarisation is slow (a model round trip) — it must not sit on the
+        # request path holding up the voice agent mid-hangup.
+        _schedule_call_summary(call_key, ticket_id)
+
+    return {"ok": True, "inserted": inserted}
+
+
+# --- Summarisation (off the request path) ------------------------------------
+# The transcript is already durable in Postgres before any of this runs, so the
+# worst case is notes that need regenerating — never a lost transcript.
+
+_call_summary_tasks: dict[str, asyncio.Task] = {}
+
+_CALL_SUMMARY_SYSTEM_PROMPT = (
+    "You are a technical note writer for an MSP ticketing system. "
+    "Write INTERNAL technician notes from the transcript of a support PHONE CALL "
+    "between a technician and a customer. Use EXACTLY this format:\n\n"
+    "[Call Summary - Hercules]\n\n"
+    "ISSUE:\n- What the caller reported\n\n"
+    "DISCUSSION:\n- Key points covered on the call\n\n"
+    "OUTCOME / NEXT STEPS:\n- What was resolved or what happens next\n\n"
+    "STATUS: [In Progress / Waiting on Client / Escalation Needed / Resolved]\n\n"
+    "Rules: Write in past tense. Be concise — bullet points, not paragraphs. "
+    "No conversational filler. Only include sections that have content. "
+    "The transcript is machine-generated speech-to-text and may contain misheard "
+    "words — read through obvious mis-transcriptions, and never invent detail "
+    "(names, part numbers, commands) that is not clearly in the transcript."
+)
+
+
+def _speaker_label(speaker: str | None) -> str:
+    return "TECHNICIAN" if speaker == "technician" else "CUSTOMER"
+
+
+def _transcript_lines(segments: list[dict]) -> list[str]:
+    """Transcript rows as prompt lines, oldest first. Each line ends in \\n so it
+    can be budgeted by _fit_newest."""
+    return [
+        f"{_speaker_label(s.get('speaker'))}: {(s.get('text') or '').strip()}\n"
+        for s in segments
+        if (s.get("text") or "").strip()
+    ]
+
+
+def _schedule_call_summary(call_key: str, ticket_id: int | None) -> None:
+    """Kick off summarisation for a finished call, at most once at a time. A
+    retried 'ended' ingest finds the task already running (or the state already
+    'ready') and does nothing."""
+    existing = _call_summary_tasks.get(call_key)
+    if existing and not existing.done():
+        return
+    _call_summary_tasks[call_key] = asyncio.create_task(_summarize_call(call_key, ticket_id))
+
+
+async def _summarize_call(call_key: str, ticket_id: int | None) -> None:
+    try:
+        await asyncio.sleep(CALL_SUMMARY_SETTLE_SECONDS)
+
+        session = await db.get_call_session(call_key)
+        if session and session.get("summary_state") in _SUMMARY_DONE_STATES:
+            return  # already summarised (a replayed 'ended' batch, or another replica)
+
+        segments = await db.get_call_transcript(call_key)
+        if not segments:
+            print(f"[call] nothing transcribed for {call_key} — no summary to write")
+            return
+
+        # _call_openrouter is the shared low-level helper every generator in
+        # openrouter_client.py delegates to; used directly here because a phone
+        # call needs its own prompt and this change owns main.py only.
+        summary = await openrouter_client._call_openrouter(
+            _CALL_SUMMARY_SYSTEM_PROMPT,
+            "Write internal technician notes for this support phone call:\n\n"
+            + "".join(_transcript_lines(segments)),
+            CALL_SUMMARY_MODEL,
+        )
+        summary = (summary or "").strip()
+        if not summary:
+            raise ValueError("model returned an empty summary")
+
+        await db.set_call_summary(call_key, summary, "ready")
+        print(f"[call] summary ready for {call_key} (ticket {ticket_id})")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        print(f"[call] summarisation failed for {call_key}: {e}")
+        # Mark it, don't hide it. The transcript is untouched and the tech can
+        # still read it; only the derived notes are missing.
+        try:
+            await db.set_call_summary(call_key, None, "failed")
+        except Exception as e2:
+            print(f"[call] could not mark {call_key} failed: {e2}")
+    finally:
+        _call_summary_tasks.pop(call_key, None)
+
+
+async def _drain_call_summaries(grace: float = 5.0) -> None:
+    """Give in-flight summarisation a moment to land on shutdown, then cancel."""
+    tasks = [t for t in list(_call_summary_tasks.values()) if not t.done()]
+    if not tasks:
+        return
+    _, pending = await asyncio.wait(tasks, timeout=grace)
+    for task in pending:
+        task.cancel()
+    for task in pending:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[call] summary task shutdown error: {e}")
+
+
+# --- Retention sweep ----------------------------------------------------------
+
+_call_purge_task: "asyncio.Task | None" = None
+
+
+async def _call_purge_loop() -> None:
+    """Delete call transcripts past the retention window, once a day, forever.
+    A failed sweep is logged and retried on the next pass — retention housekeeping
+    must never be able to take the help desk down."""
+    while True:
+        try:
+            removed = await db.purge_old_calls(CALL_RETENTION_DAYS)
+            print(f"[call-purge] removed {removed} call session(s) older than {CALL_RETENTION_DAYS} days")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[call-purge] sweep failed, retrying next cycle: {e}")
+        await asyncio.sleep(CALL_PURGE_INTERVAL_SECONDS)
+
+
+def _start_call_purge() -> None:
+    global _call_purge_task
+    if _call_purge_task and not _call_purge_task.done():
+        return
+    _call_purge_task = asyncio.create_task(_call_purge_loop())
+
+
+async def _stop_call_purge() -> None:
+    global _call_purge_task
+    task, _call_purge_task = _call_purge_task, None
+    if not task:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"[call-purge] shutdown error: {e}")
+
+
+# --- Reading calls back -------------------------------------------------------
+
+
+async def _calls_with_transcripts(ticket_id: int) -> list[dict]:
+    """Every call on a ticket, each with its ordered transcript attached.
+
+    Fetched in ONE query, deliberately.
+
+    db.py opens a fresh Postgres connection per query and has no pool, so
+    gathering one transcript fetch per call opened up to CALL_HISTORY_MAX_CALLS
+    connections at once — on every Call-tab open and every /call/history poll.
+    Ten technicians, or one restart making every open pod reconnect, is enough
+    to exhaust max_connections. Every other query in this app takes a fresh
+    connection too, so that does not degrade the Call tab, it takes down AI
+    chat, live chat and the ConnectWise actions with it.
+    """
+    calls = await db.get_calls_for_ticket(ticket_id)
+    if not calls:
+        return []
+    # Newest calls, not oldest: get_calls_for_ticket orders started_at ASC, so a
+    # head slice would hide the call the technician just took.
+    calls = calls[-CALL_HISTORY_MAX_CALLS:]
+
+    keys = [c.get("call_key") for c in calls if c.get("call_key")]
+    try:
+        by_call = await db.get_transcripts_for_calls(keys)
+    except Exception as e:  # noqa: BLE001 - a transcript failure must not blank the tab
+        print(f"[call] transcript fetch failed for ticket {ticket_id}: {e}")
+        by_call = {}
+
+    out = []
+    for call in calls:
+        item = dict(call)
+        item["segments"] = by_call.get(call.get("call_key"), [])
+        out.append(item)
+    return out
+
+
+@app.get("/call/history")
+async def call_history(ticketId: int = Query(...)):
+    """Calls and transcripts for a ticket, for the pod's Call tab. POD_SECRET is
+    enforced by the HTTP middleware — this path is deliberately NOT exempt."""
+    return {"ticketId": ticketId, "calls": await _calls_with_transcripts(ticketId)}
+
+
+@app.websocket("/call/ws")
+async def call_ws(websocket: WebSocket):
+    """The technician's live call transcript. Auth via POD_SECRET (?token=),
+    checked here because the HTTP middleware never runs for a websocket scope —
+    same as /live/ws. Sends the backlog on connect, then each new segment as it
+    is ingested.
+
+    Receive-only: a transcript is never authored from the pod, so nothing a
+    client sends is acted on. It also does NOT touch the live-chat auto-end —
+    closing the transcript tab has no bearing on the phone call or on a live chat.
+    """
+    token = websocket.query_params.get("token", "")
+    if not hmac.compare_digest(token.encode(), POD_SECRET.encode()):
+        await websocket.close(code=1008)
+        return
+    try:
+        ticket_id = int(websocket.query_params.get("ticketId", ""))
+    except (TypeError, ValueError):
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    call_bus.register(ticket_id, websocket)
+
+    try:
+        calls = await _calls_with_transcripts(ticket_id)
+        await websocket.send_json({"kind": "history", "ticketId": ticket_id, "calls": calls})
+    except Exception as e:
+        print(f"[call-ws] backlog failed for ticket {ticket_id}: {e}")
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            # Anything else is ignored on purpose — see the docstring.
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[call-ws] error on ticket {ticket_id}: {e}")
+    finally:
+        call_bus.unregister(ticket_id, websocket)
+
+
+# --- Call material for drafting -----------------------------------------------
+
+
+def _call_material_header(call: dict) -> str:
+    who = call.get("tech_name") or call.get("tech_identifier") or "a technician"
+    started = (call.get("started_at") or "")[:16].replace("T", " ")
+    parts = [f"Phone call — {who}"]
+    caller = call.get("caller_number")
+    if caller:
+        parts.append(f"with {caller}")
+    if started:
+        parts.append(f"on {started}")
+    talk = call.get("talk_seconds")
+    if talk:
+        parts.append(f"({int(talk) // 60}m {int(talk) % 60}s)")
+    disposition = call.get("disposition")
+    if disposition:
+        parts.append(f"[{disposition}]")
+    return " ".join(parts) + ":"
+
+
+async def _call_source_material(ticket_id: int) -> str:
+    """This ticket's phone calls — generated notes plus transcript — as prompt text.
+
+    Best effort by design: returns "" when there is no call AND on any failure,
+    so drafting never gains a new error path. The existing failure semantics (a
+    failed ConnectWise note fetch is the only thing that surfaces an error) stay
+    exactly as they were.
+    """
+    if not ticket_id:
+        return ""
+    try:
+        calls = await db.get_calls_for_ticket(ticket_id)
+        if not calls:
+            return ""
+
+        # Only calls from the contact this email is going TO.
+        #
+        # This material ends up in the prompt that drafts a customer-facing
+        # email, and get_calls_for_ticket filters on ticket alone. On a ticket
+        # two people have rung about, that put contact A's phone conversation
+        # into the email drafted for contact B. A technician reviews the draft,
+        # but "someone would probably notice" is not a control.
+        #
+        # Calls with no contact recorded are kept: they are almost always the
+        # ticket's own caller, and dropping them would silently empty the
+        # material for every unidentified caller.
+        ticket_contact_id = None
+        try:
+            ticket = await cw_client.get_ticket(ticket_id)
+            ticket_contact_id = (ticket or {}).get("contact_id")
+        except Exception as e:  # noqa: BLE001
+            print(f"[call-material] could not read ticket contact for {ticket_id}: {e}")
+
+        if ticket_contact_id:
+            calls = [
+                c for c in calls
+                if not c.get("contact_id") or c.get("contact_id") == ticket_contact_id
+            ]
+            if not calls:
+                return ""
+
+        # Ordering is not guaranteed by the query, so sort explicitly and keep
+        # the most recent few, presented oldest first.
+        calls = sorted(calls, key=lambda c: (c.get("started_at") or ""))[-CALL_MATERIAL_MAX_CALLS:]
+        per_call_budget = max(1, CALL_MATERIAL_BUDGET // len(calls))
+
+        blocks = []
+        for call in calls:
+            call_key = call.get("call_key")
+            if not call_key:
+                continue
+            segments = await db.get_call_transcript(call_key)
+            summary = (call.get("summary") or "").strip()
+            has_summary = bool(summary) and call.get("summary_state") in _SUMMARY_DONE_STATES
+            # _fit_newest wants newest-first and hands back oldest-first, keeping
+            # as many of the newest lines as fit.
+            body = _fit_newest(
+                list(reversed(_transcript_lines(segments))), per_call_budget, "call transcript lines",
+            )
+            if not has_summary and not body:
+                continue
+            block = [_call_material_header(call)]
+            if has_summary:
+                block.append("Notes generated from this call:")
+                block.append(summary)
+            if body:
+                block.append("Call transcript (oldest first):")
+                block.append(body.rstrip("\n"))
+            blocks.append("\n".join(block))
+
+        if not blocks:
+            return ""
+        return (
+            "Phone calls on this ticket (transcribed automatically — this is "
+            "machine-generated speech-to-text and may contain misheard words):\n\n"
+            + "\n\n".join(blocks)
+        )
+    except Exception as e:
+        print(f"[call-material] skipped for ticket {ticket_id}: {e}")
+        return ""
+
+
+async def _with_call_material(ticket_id: int, source_text: str) -> str:
+    """Append this ticket's call material to drafting source material.
+
+    Returns `source_text` UNCHANGED when there is no call (or anything fails), so
+    with no call in play every prompt is character-for-character what it was
+    before call transcripts existed.
+    """
+    extra = await _call_source_material(ticket_id)
+    if not extra:
+        return source_text
+    return f"{source_text}\n\n{extra}" if source_text else extra

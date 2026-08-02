@@ -53,6 +53,15 @@
             --accent-border:rgba(63,200,115,.55);
             --accent-glow:rgba(63,200,115,.5);
         }
+        /* Call mode is blue — a third, unmistakable identity. Nothing typed here
+           reaches the customer: the pane is a read-only view of the phone call. */
+        body.call-mode{
+            --accent:#4AA8E0;
+            --accent-text:#04121c;
+            --accent-soft:rgba(74,168,224,.14);
+            --accent-border:rgba(74,168,224,.55);
+            --accent-glow:rgba(74,168,224,.5);
+        }
 
         html,body{height:100%;}
         body{
@@ -134,11 +143,17 @@
         /* mode pill */
         .mode-pill-wrap{padding:0 16px 10px;flex-shrink:0;}
         .mode-pill{position:relative;display:flex;background:var(--sunken);border:1px solid var(--border-2);border-radius:11px;padding:4px;height:42px;}
-        .mode-pill .indicator{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:8px;background:var(--accent);transform:translateX(0);transition:transform .34s cubic-bezier(.4,0,.2,1),background .34s;box-shadow:0 4px 14px -4px var(--accent-glow);}
-        body.live-mode .mode-pill .indicator{transform:translateX(calc(100% + 2px));}
-        .mode-tab{position:relative;z-index:2;flex:1;border:none;background:none;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:var(--icon);display:flex;align-items:center;justify-content:center;gap:7px;transition:color .2s;}
+        /* One third of the flex track: the pill's padding box is (W - 2px border) and the
+           track is (W - 2px border - 8px padding), so (100% - 8px)/3 is exactly one tab. */
+        .mode-pill .indicator{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px) / 3);border-radius:8px;background:var(--accent);transform:translateX(0);transition:transform .34s cubic-bezier(.4,0,.2,1),background .34s;box-shadow:0 4px 14px -4px var(--accent-glow);}
+        body.live-mode .mode-pill .indicator{transform:translateX(100%);}
+        body.call-mode .mode-pill .indicator{transform:translateX(200%);}
+        .mode-tab{position:relative;z-index:2;flex:1;min-width:0;white-space:nowrap;border:none;background:none;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:var(--icon);display:flex;align-items:center;justify-content:center;gap:7px;transition:color .2s;}
         .mode-tab .i{font-size:18px;}
         .mode-tab.active{color:var(--accent-text);}
+        /* Three tabs in a narrow CW pod: shrink, then fall back to icons only. */
+        @media (max-width:540px){.mode-tab{font-size:12px;gap:5px;}}
+        @media (max-width:430px){.mode-tab .lbl{display:none;}.mode-tab .i{font-size:20px;}}
 
         /* threads */
         .threads{position:relative;flex:1;min-height:0;}
@@ -146,6 +161,8 @@
         .thread.ai{opacity:1;transform:none;pointer-events:auto;}
         body.live-mode .thread.ai{opacity:0;transform:translateX(-10px);pointer-events:none;}
         body.live-mode .thread.live{opacity:1;transform:none;pointer-events:auto;}
+        body.call-mode .thread.ai,body.call-mode .thread.live{opacity:0;transform:translateX(-10px);pointer-events:none;}
+        body.call-mode .thread.call{opacity:1;transform:none;pointer-events:auto;}
 
         .welcome{text-align:center;color:var(--muted);padding:22px 10px;font-size:12.5px;line-height:1.6;}
 
@@ -158,6 +175,9 @@
         .bubble-user{background:var(--accent);border-top-right-radius:4px;color:var(--accent-text);font-weight:500;}
         .bubble-out{background:var(--live);border-top-right-radius:4px;color:#04160b;font-weight:500;}
         .bubble-in{background:var(--cust-bubble);border:1px solid var(--cust-bubble-border);border-top-left-radius:4px;color:var(--cust-text);}
+        /* Spoken by the technician on the phone. Deliberately NOT .bubble-out — green
+           means "sent to the customer over live chat" everywhere else in this UI. */
+        .bubble-call{background:var(--accent);border-top-right-radius:4px;color:var(--accent-text);font-weight:500;}
         .bubble.err{color:#ff9a9a;font-style:italic;}
 
         .bubble p{margin-bottom:3px;}
@@ -194,6 +214,39 @@
         .read-receipt.is-read{color:var(--live);}
         .read-receipt .i{font-size:13px;}
 
+        /* ===== call transcript pane ===== */
+        .thread.call .live-head b{color:var(--accent);}
+        .call-list{display:flex;flex-direction:column;gap:14px;}
+        .call-block{display:flex;flex-direction:column;gap:12px;}
+        .call-meta{align-self:center;max-width:100%;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 7px;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:5px 13px;text-align:center;}
+        .call-meta .i{font-size:14px;color:var(--accent);}
+        .call-meta.is-live .i{animation:hpulse 1.6s ease-in-out infinite;}
+        .call-meta b{color:var(--text-2);font-weight:600;}
+        .call-meta .dur{font-family:'IBM Plex Mono',monospace;color:var(--text-2);}
+        .call-seg-list{display:flex;flex-direction:column;gap:12px;}
+        .msg-name .seg-time{font-weight:400;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+
+        .call-summary{background:var(--panel);border:1px solid var(--border-2);border-radius:12px;padding:11px 13px;display:flex;flex-direction:column;gap:8px;}
+        .call-summary.ready{border-color:var(--accent-border);}
+        .call-summary-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+        .call-summary-title{display:flex;align-items:center;gap:7px;min-width:0;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
+        .call-summary-title .i{font-size:15px;color:var(--accent);flex-shrink:0;}
+        .call-summary.pending .call-summary-title .i{animation:hpulse 1.4s ease-in-out infinite;}
+        .call-summary-body{font-size:12px;line-height:1.55;color:#c6d2df;white-space:pre-wrap;overflow-wrap:anywhere;}
+        .call-summary-body.muted{color:var(--muted);font-style:italic;}
+        .call-summary-body.err{color:#ff9a9a;font-style:italic;}
+
+        .call-past{background:var(--panel-2);border:1px solid var(--border-2);border-radius:12px;}
+        .call-past > summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;padding:10px 12px;font-size:12px;color:#cdd8e4;}
+        .call-past > summary::-webkit-details-marker{display:none;}
+        .call-past > summary:hover{color:var(--text);}
+        .call-past > summary .i{font-size:17px;color:var(--icon);flex-shrink:0;transition:transform .2s;}
+        .call-past[open] > summary .i.chev{transform:rotate(90deg);}
+        .call-past .pc-when{font-weight:600;white-space:nowrap;}
+        .call-past .pc-who{flex:1;min-width:0;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .call-past .pc-dur{color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+        .call-past-body{display:flex;flex-direction:column;gap:12px;padding:12px;border-top:1px solid var(--border-3);}
+
         /* composer */
         .composer-wrap{padding:8px 16px 14px;flex-shrink:0;}
         .attach-strip{display:none;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
@@ -206,6 +259,7 @@
         .mode-indicator{display:flex;align-items:center;gap:6px;margin-bottom:8px;}
         .mode-indicator .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);}
         body.live-mode .mode-indicator .dot{animation:hpulse 1.6s ease-in-out infinite;}
+        body.call-mode.call-live .mode-indicator .dot{animation:hpulse 1.6s ease-in-out infinite;}
         .mode-indicator span:last-child{font-size:11px;font-weight:500;color:var(--accent);}
 
         .composer{display:flex;align-items:flex-end;gap:8px;background:var(--panel);border:1px solid var(--accent-border);border-radius:13px;padding:6px 6px 6px 10px;transition:border-color .3s;}
@@ -221,6 +275,11 @@
            to the customer, so hide the affordance (and any pending AI attachments) in live mode. */
         body.live-mode .composer .att{display:none;}
         body.live-mode .attach-strip{display:none !important;}
+        /* Call mode is read-only — there is nowhere for a typed message to go, so the
+           composer is hidden entirely. Add Time / Save / Resolve stay: they are useful
+           mid-call. */
+        body.call-mode .composer{display:none;}
+        body.call-mode .attach-strip{display:none !important;}
 
         .action-row{display:flex;align-items:center;gap:8px;margin-top:10px;}
         .act{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:var(--panel);color:#c6d2df;border-radius:10px;padding:9px;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s,background .15s;white-space:nowrap;}
@@ -436,8 +495,9 @@
                     <div class="mode-pill-wrap">
                         <div class="mode-pill">
                             <div class="indicator"></div>
-                            <button type="button" class="mode-tab active" id="aiTab"><span class="i">forum</span>Assistant</button>
-                            <button type="button" class="mode-tab" id="liveTab"><span class="i">support_agent</span>Live chat</button>
+                            <button type="button" class="mode-tab active" id="aiTab" title="Assistant"><span class="i">forum</span><span class="lbl">Assistant</span></button>
+                            <button type="button" class="mode-tab" id="liveTab" title="Live chat with the customer"><span class="i">support_agent</span><span class="lbl">Live</span></button>
+                            <button type="button" class="mode-tab" id="callTab" title="Phone call transcript"><span class="i">call</span><span class="lbl">Call</span></button>
                         </div>
                     </div>
 
@@ -447,6 +507,11 @@
                         </div>
                         <div class="thread live" id="liveThread">
                             <div class="live-head" id="liveHead">Live channel · messaging as <b id="liveAsName">technician</b></div>
+                        </div>
+                        <div class="thread call" id="callThread">
+                            <div class="live-head" id="callHead">Call transcript · <b id="callState">connecting…</b></div>
+                            <div class="empty-hint" id="callEmpty">Checking this ticket for calls…</div>
+                            <div class="call-list" id="callList"></div>
                         </div>
                     </div>
 
@@ -701,12 +766,13 @@
 
         // ===== Elements =====
         const $ = function(id){ return document.getElementById(id); };
-        const aiThread = $('aiThread'), liveThread = $('liveThread');
+        const aiThread = $('aiThread'), liveThread = $('liveThread'), callThread = $('callThread');
         const chatInput = $('chatInput'), sendBtn = $('sendBtn'), composer = $('composer');
         const saveBtn = $('saveBtn'), resolveBtn = $('resolveBtn'), addTimeBtn = $('addTimeBtn'), clearBtn = $('clearBtn');
         const modelSelect = $('modelSelect'), modeText = $('modeText');
         const contextCard = $('contextCard');
-        const aiTab = $('aiTab'), liveTab = $('liveTab');
+        const aiTab = $('aiTab'), liveTab = $('liveTab'), callTab = $('callTab');
+        const callList = $('callList'), callEmpty = $('callEmpty'), callStateEl = $('callState');
         const attachBtn = $('attachBtn'), fileInput = $('fileInput'), attachStrip = $('attachStrip');
         const toast = $('toast'), resultBanner = $('resultBanner'), resultBannerText = $('resultBannerText'), resultBannerClose = $('resultBannerClose');
         const overlay = $('overlay');
@@ -901,8 +967,9 @@
             });
         }
         async function addFiles(files){
-            // Attachments feed the AI assistant, not the live customer channel.
-            if (liveMode) { showToast('Attachments go to the AI assistant — switch to Assistant to attach', 'error'); return; }
+            // Attachments feed the AI assistant, not the live customer channel or the
+            // read-only call transcript.
+            if (liveMode || currentMode === 'call') { showToast('Attachments go to the AI assistant — switch to Assistant to attach', 'error'); return; }
             for (const file of files) {
                 if (file.type.startsWith('image/')) {
                     const imageCount = pendingAttachments.filter(function(a){ return a.kind === 'image'; }).length;
@@ -938,6 +1005,9 @@
         // ===== Send (AI) =====
         async function sendMessage(){
             const text = chatInput.value.trim();
+            // Call mode has no composer — never let a stray Enter leak the tech's
+            // keystrokes into the AI thread while they are watching a transcript.
+            if (currentMode === 'call') return;
             if (liveMode) { sendLiveMessage(text); return; }
             if ((!text && pendingAttachments.length === 0) || isStreaming) return;
 
@@ -1824,6 +1894,9 @@
         }
 
         // ===== Live messaging (technician <-> customer) =====
+        // `currentMode` is the three-way pill state; `liveMode` stays the boolean the
+        // rest of the file reads ("is the composer wired to the customer?").
+        let currentMode = 'ai';   // 'ai' | 'live' | 'call'
         let liveMode = false;
         let liveWs = null;
         let liveWantOpen = false;
@@ -1962,11 +2035,27 @@
         }
 
         function setMode(mode, skipServer){
+            if (mode !== 'live' && mode !== 'call') mode = 'ai';
+            const prev = currentMode;
+            if (mode === prev) return;
+            currentMode = mode;
             const on = mode === 'live';
             liveMode = on;
             document.body.classList.toggle('live-mode', on);
-            aiTab.classList.toggle('active', !on);
+            document.body.classList.toggle('call-mode', mode === 'call');
+            aiTab.classList.toggle('active', mode === 'ai');
             liveTab.classList.toggle('active', on);
+            callTab.classList.toggle('active', mode === 'call');
+            // Leave-transitions run first, and only for the mode we were actually in —
+            // /live/end must never fire for a session that was never started.
+            if (prev === 'live') {
+                hideCustomerTyping();
+                sendTyping('stop');
+                closeLiveWs();
+                if (!skipServer) postLive('/live/end').then(function(res){ if (res && res.note_saved) showToast('Live chat summary saved to ticket'); });
+            } else if (prev === 'call') {
+                closeCallWs();
+            }
             if (on) {
                 $('liveAsName').textContent = liveAuthorName();
                 chatInput.placeholder = 'Message ' + (TICKET.contact_name || 'the customer') + '…';
@@ -1974,13 +2063,13 @@
                 openLiveWs();
                 if (!skipServer) postLive('/live/start');
                 scrollThread(liveThread);
+            } else if (mode === 'call') {
+                modeText.textContent = 'Call — phone transcript, internal only';
+                openCallWs();
+                scrollThread(callThread);
             } else {
                 chatInput.placeholder = 'Ask about ticket #' + TICKET.id + '…';
                 modeText.textContent = 'Assistant — ask about this ticket';
-                hideCustomerTyping();
-                sendTyping('stop');
-                closeLiveWs();
-                if (!skipServer) postLive('/live/end').then(function(res){ if (res && res.note_saved) showToast('Live chat summary saved to ticket'); });
             }
         }
 
@@ -2006,6 +2095,552 @@
             if (now - lastTypingSent > 2500) { lastTypingSent = now; sendTyping('start'); }
             clearTimeout(techTypingTimer);
             techTypingTimer = setTimeout(function(){ sendTyping('stop'); lastTypingSent = 0; }, 3500);
+        }
+
+        // ===== Call transcript (read-only view of the phone call on this ticket) =====
+        // Mirrors the live-chat socket: /call/ws?token=..&ticketId=.. sends a backlog
+        // frame first, then one frame per new transcript segment. This socket is a
+        // viewer, never a channel — nothing is ever sent on it, and nothing here can
+        // reach the customer. If the socket cannot come up (proxy without upgrade, an
+        // older server) we fall back once to GET /call/history so the pane still shows
+        // the calls that already happened.
+        let callWs = null;
+        let callWantOpen = false;
+        let callWsEverOpen = false;
+        let callOpenTimer = null;
+        let callTickTimer = null;
+        let callPollTimer = null;
+        let callSummaryTimer = null;
+        let callSummaryTries = 0;
+        let callSummarySig = '';
+        let callHistoryLoading = false;
+        let callHistoryFails = 0;
+        let callDataSeen = false;
+        const callModel = new Map();            // call_key -> record (meta + DOM refs)
+        const CALL_RECENT_MS = 10 * 60 * 1000;  // a call that ended this recently opens expanded
+        const CALL_SUMMARY_MAX_TRIES = 20;      // ~4 minutes of waiting for notes, then say so
+
+        // The ingest path, the DB and the bus all name these fields slightly
+        // differently (snake vs camel); read whichever arrives.
+        function callPick(obj){
+            for (let i = 1; i < arguments.length; i++) {
+                const v = obj[arguments[i]];
+                if (v !== undefined && v !== null && v !== '') return v;
+            }
+            return null;
+        }
+        function callNormCall(c){
+            const talk = callPick(c, 'talk_seconds', 'talkSeconds');
+            return {
+                key: String(callPick(c, 'call_key', 'callKey', 'key') || ''),
+                techName: callPick(c, 'tech_name', 'techName') || '',
+                techIdentifier: callPick(c, 'tech_identifier', 'techIdentifier') || '',
+                callerNumber: callPick(c, 'caller_number', 'callerNumber') || '',
+                startedAt: callPick(c, 'started_at', 'startedAt'),
+                endedAt: callPick(c, 'ended_at', 'endedAt'),
+                talkSeconds: talk == null ? null : Number(talk),
+                disposition: callPick(c, 'disposition') || '',
+                summary: typeof c.summary === 'string' ? c.summary : '',
+                summaryState: String(callPick(c, 'summary_state', 'summaryState') || '').toLowerCase(),
+            };
+        }
+        function callNormSeg(s, fallbackKey){
+            const sp = String(callPick(s, 'speaker', 'role') || '').toLowerCase();
+            return {
+                id: String(callPick(s, 'id', 'segment_id', 'segmentId') || ''),
+                seq: Number(callPick(s, 'seq', 'sequence') || 0),
+                speaker: (sp === 'technician' || sp === 'tech' || sp === 'agent') ? 'technician' : 'customer',
+                text: typeof s.text === 'string' ? s.text : (typeof s.body === 'string' ? s.body : ''),
+                spokenAt: callPick(s, 'spoken_at', 'spokenAt', 'at', 'ts'),
+                callKey: String(callPick(s, 'call_key', 'callKey') || fallbackKey || ''),
+            };
+        }
+
+        function callDurationText(sec){
+            sec = Math.max(0, Math.round(Number(sec) || 0));
+            const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+            if (h) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+            if (m) return m + 'm ' + String(s).padStart(2, '0') + 's';
+            return s + 's';
+        }
+        function callClock(iso){
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d)) return '';
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        function callIsLive(c){ return !c.endedAt; }
+        function callElapsed(c){
+            if (c.talkSeconds != null) return c.talkSeconds;
+            const st = tsMs(c.startedAt);
+            if (!st) return null;
+            const en = c.endedAt ? tsMs(c.endedAt) : Date.now();
+            if (!en || en < st) return null;
+            return (en - st) / 1000;
+        }
+        function callWho(c){
+            const name = c.techName || (c.techIdentifier ? memberName(c.techIdentifier) : '');
+            if (!name) return '';
+            return (c.techIdentifier && c.techIdentifier === liveMember()) ? name + ' (you)' : name;
+        }
+        // Auto-scroll only when the tech is already reading the newest line — never
+        // yank them away from something they scrolled back to mid-call.
+        function callAtBottom(){
+            return (callThread.scrollHeight - callThread.scrollTop - callThread.clientHeight) <= 64;
+        }
+
+        function callInsertBlock(root){
+            const start = Number(root.dataset.start) || 0;
+            const kids = callList.children;
+            let ref = null;
+            for (let i = kids.length - 1; i >= 0; i--) {
+                if ((Number(kids[i].dataset.start) || 0) <= start) break;
+                ref = kids[i];
+            }
+            callList.insertBefore(root, ref);
+        }
+        function callEnsureBlock(c){
+            if (c.el) return c.el;
+            const segList = document.createElement('div');
+            segList.className = 'call-seg-list';
+            const summaryBox = document.createElement('div');
+            summaryBox.className = 'call-summary';
+            summaryBox.style.display = 'none';
+            const meta = document.createElement('div');
+            meta.className = 'call-meta';
+            // A call still running — or only just finished — opens expanded. Anything
+            // older is collapsed behind its header so the tech can read it back.
+            const ended = tsMs(c.endedAt);
+            const fresh = callIsLive(c) || (ended && (Date.now() - ended) < CALL_RECENT_MS);
+            let root;
+            if (fresh) {
+                root = document.createElement('div');
+                root.className = 'call-block';
+                root.appendChild(meta);
+                root.appendChild(segList);
+                root.appendChild(summaryBox);   // notes land under the transcript, newest last
+            } else {
+                root = document.createElement('details');
+                root.className = 'call-past';
+                const head = document.createElement('summary');
+                head.innerHTML = '<span class="i chev">chevron_right</span><span class="pc-when"></span><span class="pc-who"></span><span class="pc-dur"></span>';
+                const body = document.createElement('div');
+                body.className = 'call-past-body';
+                body.appendChild(summaryBox);   // reading back: notes first, transcript under
+                body.appendChild(segList);
+                root.appendChild(head);
+                root.appendChild(body);
+            }
+            root.dataset.start = String(tsMs(c.startedAt) || Date.now());
+            c.el = { root: root, meta: meta, segList: segList, summary: summaryBox, durEl: null, past: !fresh };
+            callInsertBlock(root);
+            return c.el;
+        }
+
+        function callTextNode(s){ const n = document.createElement('span'); n.textContent = s; return n; }
+        function callRenderMeta(c){
+            const el = c.el;
+            if (!el) return;
+            const who = callWho(c);
+            const secs = callElapsed(c);
+            const dur = secs == null ? '' : callDurationText(secs);
+            if (who !== c.renderedWho) {
+                c.renderedWho = who;
+                const label = who || 'Technician';
+                el.segList.querySelectorAll('.msg-row.out > .msg-name').forEach(function(n){
+                    if (n.firstChild) n.firstChild.nodeValue = label;
+                });
+            }
+            if (el.past) {
+                const head = el.root.firstElementChild;
+                head.querySelector('.pc-when').textContent = c.startedAt ? shortDate(c.startedAt) : 'Call';
+                head.querySelector('.pc-who').textContent = who ? '· ' + who : (c.callerNumber ? '· ' + c.callerNumber : '');
+                head.querySelector('.pc-dur').textContent = dur;
+                el.durEl = null;
+                return;
+            }
+            const live = callIsLive(c);
+            el.meta.className = 'call-meta' + (live ? ' is-live' : '');
+            el.meta.innerHTML = '';
+            const icon = document.createElement('span');
+            icon.className = 'i';
+            icon.textContent = live ? 'phone_in_talk' : 'call_end';
+            el.meta.appendChild(icon);
+            if (who) {
+                el.meta.appendChild(callTextNode('Answered by'));
+                const b = document.createElement('b');
+                b.textContent = who;
+                el.meta.appendChild(b);
+            } else {
+                el.meta.appendChild(callTextNode(live ? 'Call in progress' : 'Call'));
+            }
+            if (c.callerNumber) el.meta.appendChild(callTextNode('· from ' + c.callerNumber));
+            const when = callClock(c.startedAt);
+            if (when) el.meta.appendChild(callTextNode('· ' + when));
+            if (dur) {
+                const d = document.createElement('span');
+                d.className = 'dur';
+                d.textContent = '· ' + dur;
+                el.meta.appendChild(d);
+                el.durEl = live ? d : null;
+            } else {
+                el.durEl = null;
+            }
+        }
+
+        function callCopy(text){
+            if (!text) return;
+            function fallback(){
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    showToast(ok ? 'Notes copied' : 'Could not copy notes', ok ? 'success' : 'error');
+                } catch (e) { showToast('Could not copy notes', 'error'); }
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function(){ showToast('Notes copied'); }, fallback);
+            } else { fallback(); }
+        }
+        function callRenderSummary(c){
+            const el = c.el;
+            if (!el) return;
+            const box = el.summary;
+            // Nothing to say until the call is over — the notes are written from the
+            // finished transcript.
+            if (callIsLive(c)) { box.style.display = 'none'; return; }
+            const state = c.summaryState || (c.summary ? 'ready' : 'pending');
+            const gaveUp = !c.summary && state !== 'failed' && !!c.summaryGaveUp;
+            box.style.display = '';
+            box.className = 'call-summary ' + (c.summary ? 'ready' : (state === 'failed' || gaveUp ? 'failed' : 'pending'));
+            box.innerHTML = '';
+            const head = document.createElement('div');
+            head.className = 'call-summary-head';
+            const title = document.createElement('div');
+            title.className = 'call-summary-title';
+            const ic = document.createElement('span');
+            ic.className = 'i';
+            ic.textContent = state === 'failed' ? 'error' : (gaveUp ? 'description' : 'auto_awesome');
+            title.appendChild(ic);
+            title.appendChild(document.createTextNode('Technician notes'));
+            head.appendChild(title);
+            const right = document.createElement('div');
+            right.style.display = 'flex';
+            right.style.alignItems = 'center';
+            right.style.gap = '7px';
+            if (state === 'posted') {
+                const flag = document.createElement('span');
+                flag.className = 'note-flag internal';
+                flag.textContent = 'On ticket';
+                right.appendChild(flag);
+            }
+            if (c.summary) {
+                const copyBtn = document.createElement('button');
+                copyBtn.type = 'button';
+                copyBtn.className = 'mini-btn';
+                copyBtn.innerHTML = '<span class="i">content_copy</span>Copy';
+                copyBtn.addEventListener('click', function(){ callCopy(c.summary); });
+                right.appendChild(copyBtn);
+            }
+            head.appendChild(right);
+            box.appendChild(head);
+            const body = document.createElement('div');
+            if (c.summary) {
+                body.className = 'call-summary-body';
+                body.textContent = c.summary;
+            } else if (state === 'failed') {
+                body.className = 'call-summary-body err';
+                body.textContent = 'Notes could not be generated for this call — the transcript above is still complete.';
+            } else if (gaveUp) {
+                body.className = 'call-summary-body muted';
+                body.textContent = 'No technician notes were generated for this call.';
+            } else {
+                body.className = 'call-summary-body muted';
+                body.textContent = 'Writing the notes from this transcript — they appear here a moment after the call ends.';
+            }
+            box.appendChild(body);
+        }
+
+        function callAddSegment(c, seg){
+            const key = seg.id || ('seq:' + seg.seq);
+            if (c.segIds.has(key)) return false;   // a reconnect replays the backlog
+            c.segIds.add(key);
+            if (!seg.text) return false;
+            const el = callEnsureBlock(c);
+            const isTech = seg.speaker === 'technician';
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (isTech ? 'out' : 'in');
+            row.dataset.seq = String(seg.seq);
+            const name = document.createElement('div');
+            name.className = 'msg-name';
+            name.textContent = isTech ? (callWho(c) || 'Technician') : (TICKET.contact_name || 'Customer');
+            const clock = callClock(seg.spokenAt);
+            if (clock) {
+                const t = document.createElement('span');
+                t.className = 'seg-time';
+                t.textContent = ' · ' + clock;
+                name.appendChild(t);
+            }
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble ' + (isTech ? 'bubble-call' : 'bubble-in');
+            const span = document.createElement('span');
+            span.style.whiteSpace = 'pre-wrap';   // spoken text is untrusted — never innerHTML
+            span.textContent = seg.text;
+            bubble.appendChild(span);
+            row.appendChild(name);
+            row.appendChild(bubble);
+            // Segments are ordered by seq, not arrival: a reconnect can interleave the
+            // replayed backlog with live frames.
+            const kids = el.segList.children;
+            let ref = null;
+            for (let i = kids.length - 1; i >= 0; i--) {
+                if ((Number(kids[i].dataset.seq) || 0) <= seg.seq) break;
+                ref = kids[i];
+            }
+            el.segList.insertBefore(row, ref);
+            return true;
+        }
+
+        function callUpsert(raw){
+            const n = callNormCall(raw);
+            if (!n.key) return null;
+            let c = callModel.get(n.key);
+            if (!c) {
+                c = { key: n.key, techName: '', techIdentifier: '', callerNumber: '', startedAt: null,
+                      endedAt: null, talkSeconds: null, disposition: '', summary: '', summaryState: '',
+                      segIds: new Set(), renderedWho: null, el: null };
+                callModel.set(n.key, c);
+            }
+            ['techName','techIdentifier','callerNumber','startedAt','endedAt','disposition','summary','summaryState']
+                .forEach(function(k){ if (n[k]) c[k] = n[k]; });
+            if (n.talkSeconds != null) c.talkSeconds = n.talkSeconds;
+            callEnsureBlock(c);
+            callRenderMeta(c);
+            callRenderSummary(c);
+            return c;
+        }
+
+        function callRenderState(){
+            let active = null, newest = null;
+            callModel.forEach(function(c){
+                if (callIsLive(c) && (!active || tsMs(c.startedAt) > tsMs(active.startedAt))) active = c;
+                if (!newest || tsMs(c.startedAt) > tsMs(newest.startedAt)) newest = c;
+            });
+            document.body.classList.toggle('call-live', !!active);
+            if (active) {
+                const who = callWho(active);
+                callStateEl.textContent = 'call in progress' + (who ? ' · ' + who : '');
+            } else if (newest) {
+                callStateEl.textContent = newest.startedAt
+                    ? 'last call ' + shortDate(newest.startedAt)
+                    : callModel.size + ' call' + (callModel.size > 1 ? 's' : '');
+            } else {
+                callStateEl.textContent = callDataSeen ? 'no calls on this ticket' : 'connecting…';
+            }
+        }
+        function callTick(){
+            callModel.forEach(function(c){
+                if (!callIsLive(c) || !c.el || !c.el.durEl) return;
+                const secs = callElapsed(c);
+                if (secs != null) c.el.durEl.textContent = '· ' + callDurationText(secs);
+            });
+        }
+        function callSyncTicker(){
+            let anyLive = false;
+            callModel.forEach(function(c){ if (callIsLive(c) && c.el && c.el.durEl) anyLive = true; });
+            if (anyLive && !callTickTimer) callTickTimer = setInterval(callTick, 1000);
+            else if (!anyLive && callTickTimer) { clearInterval(callTickTimer); callTickTimer = null; }
+        }
+        function callAfterUpdate(stick){
+            const any = callList.children.length > 0;
+            callEmpty.style.display = any ? 'none' : '';
+            if (!any) {
+                callEmpty.textContent = callDataSeen
+                    ? 'No calls recorded on this ticket yet. A live transcript appears here while a call is in progress.'
+                    : 'Checking this ticket for calls…';
+            }
+            callRenderState();
+            callSyncTicker();
+            callWatchSummary();
+            if (stick) scrollThread(callThread);
+        }
+
+        // The notes are written to the database a few seconds after the call ends,
+        // but the bus only announces segments and the hangup — nothing publishes the
+        // summary. So while a finished call is still without notes, re-read the
+        // history until they land (or until it is clear none are coming).
+        function callPendingSummaryKeys(){
+            const keys = [];
+            callModel.forEach(function(c){
+                if (!callIsLive(c) && !c.summary && c.summaryState !== 'failed' && !c.summaryGaveUp) keys.push(c.key);
+            });
+            return keys.sort().join(',');
+        }
+        function callWatchSummary(){
+            const sig = callPendingSummaryKeys();
+            if (sig !== callSummarySig) {   // a different call is waiting now — start over
+                callSummarySig = sig;
+                callSummaryTries = 0;
+                clearTimeout(callSummaryTimer);
+                callSummaryTimer = null;
+            }
+            if (!sig || !callWantOpen) { clearTimeout(callSummaryTimer); callSummaryTimer = null; return; }
+            if (callSummaryTries >= CALL_SUMMARY_MAX_TRIES) {
+                // Some calls never produce notes (nothing transcribed). Say so rather
+                // than spinning on "generating…" forever.
+                callModel.forEach(function(c){
+                    if (!callIsLive(c) && !c.summary && c.summaryState !== 'failed' && !c.summaryGaveUp) {
+                        c.summaryGaveUp = true;
+                        callRenderSummary(c);
+                    }
+                });
+                return;
+            }
+            if (callSummaryTimer) return;   // already waiting on a re-read
+            callSummaryTimer = setTimeout(function(){
+                callSummaryTimer = null;
+                callSummaryTries++;
+                loadCallHistory();
+            }, callSummaryTries < 6 ? 5000 : 15000);
+        }
+
+        function callExtractCalls(payload){
+            if (!payload) return [];
+            if (Array.isArray(payload)) return payload;
+            const list = payload.calls || payload.sessions || payload.history || payload.items;
+            if (Array.isArray(list)) return list;
+            if (payload.call) return [payload.call];
+            if (payload.call_key || payload.callKey) return [payload];
+            return [];
+        }
+        function callApplyHistory(payload){
+            const stick = callAtBottom();
+            callDataSeen = true;
+            callExtractCalls(payload).forEach(function(raw){
+                const c = callUpsert(raw);
+                if (!c) return;
+                const segs = raw.segments || raw.transcript || raw.messages;
+                if (Array.isArray(segs)) segs.forEach(function(s){ callAddSegment(c, callNormSeg(s, c.key)); });
+                callRenderMeta(c);
+            });
+            // Some shapes hand back a flat segment list alongside the sessions.
+            const flat = (payload && !Array.isArray(payload)) ? (payload.segments || payload.transcript) : null;
+            if (Array.isArray(flat)) {
+                flat.forEach(function(s){
+                    const k = String(callPick(s, 'call_key', 'callKey') || '');
+                    const c = k ? callModel.get(k) : null;
+                    if (c) callAddSegment(c, callNormSeg(s, k));
+                });
+            }
+            callAfterUpdate(stick);
+        }
+        function callApplySegmentFrame(raw){
+            const stick = callAtBottom();
+            callDataSeen = true;
+            const c = callUpsert(raw);   // segment frames carry call-level fields too
+            if (!c) return;
+            callAddSegment(c, callNormSeg(raw, c.key));
+            callAfterUpdate(stick);
+        }
+        function handleCallFrame(frame){
+            if (!frame) return;
+            const kind = String(frame.kind || frame.type || '');
+            if (kind === 'history' || kind === 'backlog' || Array.isArray(frame.calls)) { callApplyHistory(frame); return; }
+            if (kind === 'segment' || kind === 'transcript' || kind === 'call_segment'
+                || (frame.speaker && typeof frame.text === 'string')) { callApplySegmentFrame(frame); return; }
+            // Anything else that names a call is a metadata update: who answered, the
+            // call ending, the summary landing.
+            if (frame.call || frame.session || frame.call_key || frame.callKey) {
+                const stick = callAtBottom();
+                callDataSeen = true;
+                let raw = frame.call || frame.session || frame;
+                // The bus announces a hangup as kind:"call_end" carrying `ts`, not an
+                // ended_at column. Without this the call would read as still running.
+                if ((kind === 'call_end' || kind === 'call_ended') && !callPick(raw, 'ended_at', 'endedAt')) {
+                    raw = Object.assign({}, raw, { ended_at: callPick(frame, 'ts', 'at') || new Date().toISOString() });
+                }
+                callUpsert(raw);
+                callAfterUpdate(stick);
+            }
+        }
+
+        function loadCallHistory(){
+            if (callHistoryLoading) return;
+            callHistoryLoading = true;
+            const url = '/call/history?ticketId=' + encodeURIComponent(TICKET.id) + '&token=' + encodeURIComponent(POD_TOKEN);
+            fetch(url, { headers: { 'X-Pod-Token': POD_TOKEN } })
+                .then(function(r){ return r.ok ? r.json() : null; })
+                .then(function(data){
+                    callHistoryLoading = false;
+                    if (!data) { callHistoryFailed(); return; }
+                    callHistoryFails = 0;
+                    callApplyHistory(data);
+                    callSchedulePoll();
+                })
+                .catch(function(){ callHistoryLoading = false; callHistoryFailed(); });
+        }
+        function callHistoryFailed(){
+            callHistoryFails++;
+            if (!callList.children.length) {
+                callEmpty.style.display = '';
+                callEmpty.textContent = 'Call transcripts are unavailable right now.';
+            }
+            callSchedulePoll();
+        }
+        // While the socket is down, polling is the only way a call in progress reaches
+        // the pane at all — back off when the endpoint keeps failing.
+        function callSchedulePoll(){
+            clearTimeout(callPollTimer);
+            if (!callWantOpen || callWsEverOpen) return;
+            const delay = Math.min(15000 * Math.pow(2, Math.min(callHistoryFails, 2)), 60000);
+            callPollTimer = setTimeout(loadCallHistory, delay);
+        }
+
+        function openCallWs(){
+            callWantOpen = true;
+            callSyncTicker();
+            if (callWs && (callWs.readyState === WebSocket.OPEN || callWs.readyState === WebSocket.CONNECTING)) return;
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const params = new URLSearchParams({ token: POD_TOKEN, ticketId: TICKET.id });
+            let sock;
+            try { sock = new WebSocket(proto + '://' + location.host + '/call/ws?' + params.toString()); }
+            catch (e) { loadCallHistory(); return; }
+            callWs = sock;
+            clearTimeout(callOpenTimer);
+            // If the socket never comes up, read the calls over plain HTTP instead so
+            // the pane is never blank.
+            callOpenTimer = setTimeout(function(){ if (!callWsEverOpen) loadCallHistory(); }, 3000);
+            sock.onopen = function(){
+                if (this !== callWs) return;
+                callWsEverOpen = true;
+                clearTimeout(callOpenTimer);
+                clearTimeout(callPollTimer);   // the socket owns freshness from here on
+            };
+            sock.onmessage = function(ev){ try { handleCallFrame(JSON.parse(ev.data)); } catch (e) {} };
+            // Only the CURRENTLY active socket may null the ref / schedule a reconnect —
+            // same guard as the live socket, for the same Call->Assistant->Call race.
+            sock.onclose = function(){
+                if (this !== callWs) return;
+                callWs = null;
+                if (!callWsEverOpen) loadCallHistory();
+                if (callWantOpen) setTimeout(openCallWs, 2000);
+            };
+            sock.onerror = function(){ try { this.close(); } catch (e) {} };
+        }
+        function closeCallWs(){
+            callWantOpen = false;
+            clearTimeout(callOpenTimer);
+            clearTimeout(callPollTimer);
+            clearTimeout(callSummaryTimer);
+            callSummaryTimer = null;
+            document.body.classList.remove('call-live');
+            if (callTickTimer) { clearInterval(callTickTimer); callTickTimer = null; }
+            if (callWs) { try { callWs.onclose = null; callWs.close(); } catch (e) {} callWs = null; }
         }
 
         // ===== Full-screen field editor =====
@@ -2056,8 +2691,9 @@
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         clearBtn.addEventListener('click', clearChat);
-        aiTab.addEventListener('click', function(){ if (liveMode) setMode('ai'); });
-        liveTab.addEventListener('click', function(){ if (!liveMode) setMode('live'); });
+        aiTab.addEventListener('click', function(){ setMode('ai'); });
+        liveTab.addEventListener('click', function(){ setMode('live'); });
+        callTab.addEventListener('click', function(){ setMode('call'); });
 
         // Resume an already-active live session after a pod reload.
         if (LIVE_ACTIVE) setMode('live', true);
