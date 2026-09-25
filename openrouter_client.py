@@ -10,25 +10,36 @@ import httpx
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
+# The model every request falls back to when none is given, and the one the
+# pod's dropdown pre-selects (the dashboard's default_model can override that).
+# GPT-6 Luna is OpenAI's fast/cheap tier — the Haiku-class slot in their lineup.
+DEFAULT_MODEL = "openai/gpt-6-luna"
+
 # Used when the OpenRouter catalog can't be fetched; also always allowed so
 # saved defaults keep working even if a model drops out of a refreshed list.
+# Keep this in the same order as MODEL_SLOTS — the first entry is the default.
 FALLBACK_MODELS = [
+    {"id": DEFAULT_MODEL, "label": "GPT-6 Luna"},
     {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5"},
-    {"id": "anthropic/claude-sonnet-4.6", "label": "Claude Sonnet 4.6"},
-    {"id": "anthropic/claude-opus-4.8", "label": "Claude Opus 4.8"},
-    {"id": "openai/gpt-5.5", "label": "GPT-5.5"},
+    {"id": "anthropic/claude-sonnet-5", "label": "Claude Sonnet 5"},
+    {"id": "anthropic/claude-opus-5.5", "label": "Claude Opus 5.5"},
+    {"id": "openai/gpt-6-sol", "label": "GPT-6 Sol"},
     {"id": "openai/gpt-5.4-mini", "label": "GPT-5.4 Mini"},
-    {"id": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+    {"id": "google/gemini-3.8-flash", "label": "Gemini 3.8 Flash"},
 ]
 
 # One dropdown entry per slot, filled with the newest vision-capable model
 # whose id matches. Patterns deliberately exclude -fast/-pro/-chat/preview/:free
 # variants so the list stays curated while versions update themselves.
+# The first slot is the dropdown default. GPT-6 ships as named tiers (Luna =
+# fast/cheap, Sol = mid, Astra = top) rather than a plain "gpt-6", so the two
+# OpenAI flagship slots track the Luna and Sol tiers by name.
 MODEL_SLOTS = [
+    re.compile(r"^openai/gpt-[\d.]+-luna$"),
     re.compile(r"^anthropic/claude-haiku-[\d.]+$"),
     re.compile(r"^anthropic/claude-sonnet-[\d.]+$"),
     re.compile(r"^anthropic/claude-opus-[\d.]+$"),
-    re.compile(r"^openai/gpt-[\d.]+$"),
+    re.compile(r"^openai/gpt-[\d.]+-sol$"),
     re.compile(r"^openai/gpt-[\d.]+-mini$"),
     re.compile(r"^google/gemini-[\d.]+-flash$"),
 ]
@@ -384,7 +395,7 @@ async def _call_openrouter(system_prompt: str, user_content: str, model: str, ma
 
 
 async def extract_search_keywords(ticket_summary: str) -> list[str]:
-    """Extract 2-4 technical search keywords from a ticket summary using Haiku (cheap + fast)."""
+    """Extract 2-4 technical search keywords from a ticket summary using the cheap default model."""
     result = await _call_openrouter(
         system_prompt=(
             "Extract the core technical keywords from this IT support ticket summary. "
@@ -399,7 +410,7 @@ async def extract_search_keywords(ticket_summary: str) -> list[str]:
             "Reply with ONLY the comma-separated keywords, nothing else."
         ),
         user_content=ticket_summary,
-        model="anthropic/claude-haiku-4.5",
+        model=DEFAULT_MODEL,
         max_tokens=50,
         temperature=0,
     )

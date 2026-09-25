@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from sse_starlette.sse import EventSourceResponse
 
+import admin_settings
 import call_bus
 import cw_client
 import cw_tools
@@ -57,6 +58,13 @@ async def lifespan(app: FastAPI):
     await call_bus.start()
     _start_call_purge()
     await openrouter_client.refresh_models()
+    # Dashboard-editable settings (prompt sections, default model) — see admin_settings.py.
+    models = await openrouter_client.get_models()
+    await admin_settings.init({
+        "prompt_role": DEFAULT_PROMPT_ROLE,
+        "prompt_guidelines": DEFAULT_PROMPT_GUIDELINES,
+        "default_model": models[0]["id"] if models else "",
+    })
     yield
     # Call-transcript background work first: both the purge sweep and any
     # in-flight summarisation talk to Postgres, so they have to be done before
@@ -154,13 +162,13 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
-    model: str = "anthropic/claude-haiku-4.5"
+    model: str = openrouter_client.DEFAULT_MODEL
     ticket_context: dict = {}
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if not openrouter_client.is_model_allowed(v):
+        if not (openrouter_client.is_model_allowed(v) or admin_settings.is_default_model(v)):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -168,13 +176,13 @@ class ChatRequest(BaseModel):
 class SaveNoteRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage]
-    model: str = "anthropic/claude-haiku-4.5"
+    model: str = openrouter_client.DEFAULT_MODEL
     member_identifier: str | None = None
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if not openrouter_client.is_model_allowed(v):
+        if not (openrouter_client.is_model_allowed(v) or admin_settings.is_default_model(v)):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -182,13 +190,13 @@ class SaveNoteRequest(BaseModel):
 class ResolveRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage] = []
-    model: str = "anthropic/claude-haiku-4.5"
+    model: str = openrouter_client.DEFAULT_MODEL
     member_identifier: str | None = None
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if not openrouter_client.is_model_allowed(v):
+        if not (openrouter_client.is_model_allowed(v) or admin_settings.is_default_model(v)):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -252,7 +260,7 @@ async def _find_similar_tickets(ticket: dict, notes: list[dict]) -> list[dict]:
     six_months_ago = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
     ticket_id = ticket["id"]
 
-    # Use AI to extract the core technical keywords (Haiku — fast, ~$0.0001/call)
+    # Use AI to extract the core technical keywords (default model — fast and cheap)
     try:
         keywords = await openrouter_client.extract_search_keywords(ticket["summary"])
     except Exception:
@@ -418,6 +426,28 @@ def _tools_section(available: list[str]) -> str:
             "  own initiative.\n"
             "- After proposing, say one short line — the draft is on screen; don't repeat it in chat.")
     return "\n".join(section)
+
+
+# Built-in text for the ADMIN-EDITABLE parts of the system prompt. The dashboard
+# (served by the customer-facing Hercules service at /admin) can override either
+# at runtime via admin_settings; everything else in build_system_prompt — ticket
+# data, untrusted-data fences, tool list, computed rules — is code-owned.
+DEFAULT_PROMPT_ROLE = """You are Hercules, an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues. If a tech asks who you are, you are Hercules, NTM's support assistant. The tech you are talking to is an NTM employee — one of us; NTM is "we"/"our team," not an outside company they can call. So NEVER tell the tech to contact, call, email, open a ticket with, or "reach out to" NTM, NTM support, the help desk, or "your MSP" — to an NTM tech that is nonsense. When something must go further, it is escalated INTERNALLY within NTM (a senior/Tier-2 tech, a team lead, or the right NTM team), never handed off "to NTM." The person who opened the ticket (the customer/end-user) and outside vendors — Microsoft, the hardware OEM, the ISP, the software publisher, and the like — are separate parties the tech can and should contact when the fix calls for it.
+
+YOUR ROLE: Help the tech troubleshoot and resolve the issue. You are their thinking partner — analyze the ticket, review what's been tried, and recommend next steps. Everything you say should be grounded in the tech's question and the ticket data below."""
+
+DEFAULT_PROMPT_GUIDELINES = """- Always base your response on what the tech is asking AND the ticket context above
+- If a LIVE CHAT WITH THE CUSTOMER is present above, the tech is messaging the customer in real time right now — use that exchange to understand the current back-and-forth and help the tech craft their next reply or troubleshooting step
+- When asked "what should we do" or "next steps" — review the ticket summary, all notes, and any similar tickets, then formulate a clear troubleshooting plan based on what's already been tried
+- If similar tickets exist above, check if any had a resolution that applies to this issue. Reference it: "Ticket #XXXX had a similar issue and was resolved by..." — but restate that resolution in internal terms; if a note's own wording says something like "escalated to NTM" or "had the client contact NTM," treat it as an internal handoff and don't parrot it back as if the tech should contact NTM
+- Techs may paste screenshots or attach images (error dialogs, console output, device photos) — read them carefully and reference the specific details you see in them
+- Give specific, actionable steps — commands, admin console paths, PowerShell cmdlets
+- Keep responses concise and focused — techs are working, not reading essays
+- Remember the tech IS NTM — so anything that is actually NTM is US, not an outside party: our help desk/service desk, the NOC or SOC, Tier-2, the on-call engineer, procurement/licensing, our internal IT, and the admin/tenant-admin role NTM holds on managed customer systems. Never tell the tech to contact, call, or open a ticket with any of these as though it were external — e.g., on a password/M365/AD ticket, don't say "have the user contact their IT admin" when that admin is us — because routing work to another NTM person or team is an INTERNAL escalation
+- When something is beyond the current tech, escalate INTERNALLY and say so plainly — loop in a senior or Tier-2 NTM tech, a team lead or manager, or the right NTM team (networking, security, etc.), framed as an internal handoff. If you don't know NTM's exact escalation path, keep it generic ("escalate to a senior/Tier-2 tech or team lead") — never invent an NTM support line, phone number, email, or ticket queue to send them to
+- Reaching OUTSIDE NTM is correct when the fix needs it — name the party: open a case with a vendor or manufacturer (Microsoft, the hardware OEM, the ISP/carrier, the line-of-business software publisher, and the like — illustrative, not exhaustive), or ask the customer/end-user to perform, confirm, provide, or authorize something. These are fine; just don't route them through NTM
+- When you are drafting a message the tech will SEND to the customer/end-user (for example, a live-chat reply or an email), it is correct and expected to direct the customer to NTM — "contact NTM support," "open a ticket with our help desk," or email support@trustntm.com. The rule against contacting NTM governs instructions aimed at the tech themselves, never what the customer is told to do
+- If the issue needs on-site work, say so clearly — that means NTM's own staff going on-site (the tech, a colleague, or a dispatched field/Tier-2 tech), not calling in an outside party"""
 
 
 def build_system_prompt(
@@ -604,9 +634,13 @@ def build_system_prompt(
         "- NEVER suggest closing or resolving the ticket — only recommend troubleshooting steps and solutions"
     )
 
-    return f"""You are Hercules, an AI troubleshooting assistant embedded in ConnectWise Manage, helping MSP technicians at National Technology Management (NTM) diagnose and resolve IT support issues. If a tech asks who you are, you are Hercules, NTM's support assistant. The tech you are talking to is an NTM employee — one of us; NTM is "we"/"our team," not an outside company they can call. So NEVER tell the tech to contact, call, email, open a ticket with, or "reach out to" NTM, NTM support, the help desk, or "your MSP" — to an NTM tech that is nonsense. When something must go further, it is escalated INTERNALLY within NTM (a senior/Tier-2 tech, a team lead, or the right NTM team), never handed off "to NTM." The person who opened the ticket (the customer/end-user) and outside vendors — Microsoft, the hardware OEM, the ISP, the software publisher, and the like — are separate parties the tech can and should contact when the fix calls for it.
-
-YOUR ROLE: Help the tech troubleshoot and resolve the issue. You are their thinking partner — analyze the ticket, review what's been tried, and recommend next steps. Everything you say should be grounded in the tech's question and the ticket data below.
+    # Admin-editable sections (dashboard overrides → built-in defaults); the ticket
+    # data and the computed rules in between stay code-owned.
+    role = admin_settings.get("prompt_role", DEFAULT_PROMPT_ROLE)
+    guidelines = admin_settings.get("prompt_guidelines", DEFAULT_PROMPT_GUIDELINES)
+    return (
+        role
+        + f"""
 
 CURRENT TICKET:
 {ticket_header}
@@ -616,20 +650,10 @@ TICKET NOTES (chronological, oldest first):
 {notes_text}[END UNTRUSTED DATA]{time_section}{audit_section}{duplicates_text}{live_text}{tools_text}
 
 GUIDELINES:
-- Always base your response on what the tech is asking AND the ticket context above
-- If a LIVE CHAT WITH THE CUSTOMER is present above, the tech is messaging the customer in real time right now — use that exchange to understand the current back-and-forth and help the tech craft their next reply or troubleshooting step
-- When asked "what should we do" or "next steps" — review the ticket summary, all notes, and any similar tickets, then formulate a clear troubleshooting plan based on what's already been tried
-- If similar tickets exist above, check if any had a resolution that applies to this issue. Reference it: "Ticket #XXXX had a similar issue and was resolved by..." — but restate that resolution in internal terms; if a note's own wording says something like "escalated to NTM" or "had the client contact NTM," treat it as an internal handoff and don't parrot it back as if the tech should contact NTM
-{resolve_rule}
-{coverage_line}
-- Techs may paste screenshots or attach images (error dialogs, console output, device photos) — read them carefully and reference the specific details you see in them
-- Give specific, actionable steps — commands, admin console paths, PowerShell cmdlets
-- Keep responses concise and focused — techs are working, not reading essays
-- Remember the tech IS NTM — so anything that is actually NTM is US, not an outside party: our help desk/service desk, the NOC or SOC, Tier-2, the on-call engineer, procurement/licensing, our internal IT, and the admin/tenant-admin role NTM holds on managed customer systems. Never tell the tech to contact, call, or open a ticket with any of these as though it were external — e.g., on a password/M365/AD ticket, don't say "have the user contact their IT admin" when that admin is us — because routing work to another NTM person or team is an INTERNAL escalation
-- When something is beyond the current tech, escalate INTERNALLY and say so plainly — loop in a senior or Tier-2 NTM tech, a team lead or manager, or the right NTM team (networking, security, etc.), framed as an internal handoff. If you don't know NTM's exact escalation path, keep it generic ("escalate to a senior/Tier-2 tech or team lead") — never invent an NTM support line, phone number, email, or ticket queue to send them to
-- Reaching OUTSIDE NTM is correct when the fix needs it — name the party: open a case with a vendor or manufacturer (Microsoft, the hardware OEM, the ISP/carrier, the line-of-business software publisher, and the like — illustrative, not exhaustive), or ask the customer/end-user to perform, confirm, provide, or authorize something. These are fine; just don't route them through NTM
-- When you are drafting a message the tech will SEND to the customer/end-user (for example, a live-chat reply or an email), it is correct and expected to direct the customer to NTM — "contact NTM support," "open a ticket with our help desk," or email support@trustntm.com. The rule against contacting NTM governs instructions aimed at the tech themselves, never what the customer is told to do
-- If the issue needs on-site work, say so clearly — that means NTM's own staff going on-site (the tech, a colleague, or a dispatched field/Tier-2 tech), not calling in an outside party"""
+"""
+        + guidelines
+        + f"\n{resolve_rule}\n{coverage_line}"
+    )
 
 
 # --- Routes ---
@@ -646,7 +670,8 @@ async def pod(
     ticketId: int = Query(...),
     member: str = Query("", description="Logged-in tech's CW member identifier, if CW can pass it"),
 ):
-    models = await openrouter_client.get_models()
+    await admin_settings.ensure_fresh()
+    models = admin_settings.with_default_model(await openrouter_client.get_models())
 
     def render(ctx: dict):
         base = {
@@ -866,6 +891,7 @@ def _invalidate_ticket_ctx(ticket_id: int) -> None:
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
+    await admin_settings.ensure_fresh()
     # The client-provided snapshot is only a fallback (and the source of the
     # similar-tickets context, which is computed once at pod load).
     ticket_ctx = request.ticket_context
@@ -1313,13 +1339,13 @@ async def _ticket_source_material(ticket_id: int, messages: list[dict]) -> tuple
 class DraftTimeRequest(BaseModel):
     ticket_id: int
     messages: list[ChatMessage] = []
-    model: str = "anthropic/claude-haiku-4.5"
+    model: str = openrouter_client.DEFAULT_MODEL
     include_email: bool = True
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if not openrouter_client.is_model_allowed(v):
+        if not (openrouter_client.is_model_allowed(v) or admin_settings.is_default_model(v)):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -1695,12 +1721,12 @@ class LiveStartRequest(BaseModel):
 class LiveEndRequest(BaseModel):
     ticket_id: int
     member_identifier: str | None = None
-    model: str = "anthropic/claude-haiku-4.5"
+    model: str = openrouter_client.DEFAULT_MODEL
 
     @field_validator("model")
     @classmethod
     def model_must_be_allowed(cls, v):
-        if not openrouter_client.is_model_allowed(v):
+        if not (openrouter_client.is_model_allowed(v) or admin_settings.is_default_model(v)):
             raise ValueError(f"Model '{v}' is not allowed")
         return v
 
@@ -1801,7 +1827,7 @@ def _schedule_auto_end(ticket_id: int, member_identifier: str | None) -> None:
                 return  # already ended (e.g. via the End-chat button)
             print(f"[live] no technician reconnected to ticket {ticket_id} "
                   f"after {LIVE_DISCONNECT_GRACE_SECONDS}s — auto-ending live chat")
-            await _finish_live_session(ticket_id, member_identifier, "anthropic/claude-haiku-4.5")
+            await _finish_live_session(ticket_id, member_identifier, openrouter_client.DEFAULT_MODEL)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1956,7 +1982,7 @@ async def live_ws(websocket: WebSocket):
 # Transcripts live only in this Postgres, for CALL_RETENTION_DAYS, then are
 # deleted by the purge sweep below. The derived ConnectWise note is permanent.
 
-CALL_SUMMARY_MODEL = os.getenv("CALL_SUMMARY_MODEL", "anthropic/claude-haiku-4.5")
+CALL_SUMMARY_MODEL = os.getenv("CALL_SUMMARY_MODEL", openrouter_client.DEFAULT_MODEL)
 # A final ingest can still be in flight when the 'ended' one lands; wait a beat
 # so the summary is written from the whole call, not all-but-the-last-sentence.
 CALL_SUMMARY_SETTLE_SECONDS = float(os.getenv("CALL_SUMMARY_SETTLE_SECONDS", "1.5"))

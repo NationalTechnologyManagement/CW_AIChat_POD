@@ -101,6 +101,30 @@ CREATE TABLE IF NOT EXISTS call_transcript_segments (
     UNIQUE (call_key, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_call_segments_call ON call_transcript_segments (call_key, seq);
+
+-- Admin dashboard settings, SHARED with the customer-facing Hercules service
+-- (which serves the dashboard at /admin). app = 'client' | 'internal'. Rows keyed
+-- 'default.<key>' are each app's built-in values, published at boot; a plain
+-- '<key>' row is an admin override. Either service may create the tables.
+CREATE TABLE IF NOT EXISTS hercules_admin_settings (
+    app        TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by TEXT,
+    PRIMARY KEY (app, key)
+);
+CREATE TABLE IF NOT EXISTS hercules_admin_settings_history (
+    id         BIGSERIAL PRIMARY KEY,
+    app        TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    old_value  TEXT,
+    new_value  TEXT,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    changed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS hercules_admin_settings_history_app_idx
+    ON hercules_admin_settings_history (app, changed_at DESC);
 """
 
 
@@ -729,3 +753,43 @@ async def purge_old_calls(days: int = 60) -> int:
         async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
             cur = await conn.execute(query, params)
             return cur.rowcount
+
+
+# --- Admin dashboard settings (shared with the customer-facing Hercules service) ---
+
+
+async def _fetch(query: str, params: tuple = ()):
+    if _use_sync:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, partial(_sync_query, _conninfo, query, params))
+    async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
+        cur = await conn.execute(query, params)
+        return await cur.fetchall()
+
+
+async def get_admin_settings(app: str) -> list[tuple[str, str | None]]:
+    """(key, value) rows for one app - overrides AND 'default.*' rows."""
+    if not _conninfo:
+        return []
+    rows = await _fetch("SELECT key, value FROM hercules_admin_settings WHERE app = %s", (app,))
+    return [(r[0], r[1]) for r in rows]
+
+
+async def upsert_admin_defaults(app: str, defaults: dict[str, str]) -> None:
+    """Publish this app's built-in values as 'default.<key>' rows (system-owned)."""
+    if not _conninfo or not defaults:
+        return
+    query = (
+        "INSERT INTO hercules_admin_settings (app, key, value, updated_by) "
+        "VALUES (%s, %s, %s, 'system') "
+        "ON CONFLICT (app, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
+    )
+    params_seq = [(app, f"default.{k}", v) for k, v in defaults.items()]
+    if _use_sync:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, partial(_sync_execute_many, _conninfo, query, params_seq))
+        return
+    async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
+        cur = conn.cursor()
+        await cur.executemany(query, params_seq)
+        await conn.commit()

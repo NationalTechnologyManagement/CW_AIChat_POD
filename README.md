@@ -89,3 +89,18 @@ Backstage logon session.
 The Manage API member needs inquire access to Companies > Configurations and
 Service Desk > Service Tickets. ScreenConnect technicians still authenticate
 normally and must have permission to view and join the matched Access session.
+
+## Admin dashboard settings
+
+The Hercules admin dashboard (served by the customer-facing Hercules service at
+`/admin`) can change two things about this pod at runtime, through the shared
+Postgres table `hercules_admin_settings` (`app = 'internal'`):
+
+- `default_model` — the model the pod's dropdown pre-selects (and always allows).
+- `prompt_role` / `prompt_guidelines` — the editable parts of the system prompt.
+  Ticket data, untrusted-data fences, the tool list and the computed rules in
+  `build_system_prompt` stay code-owned.
+
+`admin_settings.py` caches the rows for 30 s and publishes the built-in defaults as
+`default.<key>` rows on boot, so the dashboard can diff and reset. No DB, or a DB
+error, simply means built-in defaults.
