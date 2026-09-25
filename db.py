@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS call_transcript_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_call_segments_call ON call_transcript_segments (call_key, seq);
 
+-- ConnectWise company -> Hudu company, resolved once and kept. hudu_company_id
+-- is NULL when Hudu had no match at resolved_at (retried after a while, see
+-- hudu_client.NO_MATCH_TTL_SECONDS).
+CREATE TABLE IF NOT EXISTS hudu_companies (
+    cw_company_id     INTEGER PRIMARY KEY,
+    cw_company_name   TEXT,
+    hudu_company_id   INTEGER,
+    hudu_company_name TEXT,
+    hudu_url          TEXT,
+    resolved_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Admin dashboard settings, SHARED with the customer-facing Hercules service
 -- (which serves the dashboard at /admin). app = 'client' | 'internal'. Rows keyed
 -- 'default.<key>' are each app's built-in values, published at boot; a plain
@@ -793,3 +805,48 @@ async def upsert_admin_defaults(app: str, defaults: dict[str, str]) -> None:
         cur = conn.cursor()
         await cur.executemany(query, params_seq)
         await conn.commit()
+
+
+# --- Hudu company mapping (see hudu_client.resolve_company) ---------------------
+
+
+async def get_hudu_company(cw_company_id: int) -> dict | None:
+    """The cached Hudu company for a ConnectWise company, with how old the row is."""
+    if not _conninfo:
+        return None
+    rows = await _fetch(
+        "SELECT hudu_company_id, hudu_company_name, hudu_url, "
+        "EXTRACT(EPOCH FROM (NOW() - resolved_at)) FROM hudu_companies WHERE cw_company_id = %s",
+        (int(cw_company_id),),
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "hudu_company_id": r[0],
+        "hudu_company_name": r[1] or "",
+        "hudu_url": r[2] or "",
+        "age_seconds": float(r[3] or 0),
+    }
+
+
+async def save_hudu_company(cw_company_id: int, cw_company_name: str, mapping: dict) -> None:
+    if not _conninfo:
+        return
+    query = (
+        "INSERT INTO hudu_companies (cw_company_id, cw_company_name, hudu_company_id, "
+        "hudu_company_name, hudu_url, resolved_at) VALUES (%s, %s, %s, %s, %s, NOW()) "
+        "ON CONFLICT (cw_company_id) DO UPDATE SET cw_company_name = EXCLUDED.cw_company_name, "
+        "hudu_company_id = EXCLUDED.hudu_company_id, hudu_company_name = EXCLUDED.hudu_company_name, "
+        "hudu_url = EXCLUDED.hudu_url, resolved_at = NOW()"
+    )
+    params = (
+        int(cw_company_id), cw_company_name or None, mapping.get("hudu_company_id"),
+        mapping.get("hudu_company_name") or None, mapping.get("hudu_url") or None,
+    )
+    if _use_sync:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, partial(_sync_execute, _conninfo, query, params))
+        return
+    async with await psycopg.AsyncConnection.connect(_conninfo) as conn:
+        await conn.execute(query, params)

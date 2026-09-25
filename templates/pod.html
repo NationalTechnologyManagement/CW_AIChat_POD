@@ -527,6 +527,7 @@
                         <div class="action-row">
                             <button class="act time" id="addTimeBtn"><span class="i">schedule</span>Add Time</button>
                             <button class="act" id="saveBtn" disabled><span class="i">bookmark_add</span>Save</button>
+                            <button class="act" id="kbBtn" title="Write this fix up as a Hudu KB article"{% if not hudu_enabled %} hidden{% endif %}><span class="i">menu_book</span>Create KB</button>
                             <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
                         </div>
                     </div>
@@ -674,6 +675,18 @@
         </div>
     </div>
 
+    <!-- identity check: who a write is logged under, before time / resolve / email -->
+    <div class="confirm-overlay" id="identityOverlay">
+        <div class="confirm">
+            <p id="identityMessage"></p>
+            <label class="field"><span>Logged under</span><select class="inp" id="identityMember"></select></label>
+            <div class="sheet-actions" style="margin-top:14px">
+                <button class="btn" id="identityCancel">Cancel</button>
+                <button class="btn btn-primary" id="identityOk">That's me &mdash; continue</button>
+            </div>
+        </div>
+    </div>
+
     <!-- full-screen editor (pops any expandable field out to fill the pod) -->
     <div class="editor-overlay" id="editorOverlay">
         <div class="editor-head">
@@ -701,6 +714,7 @@
         const SAVED_MESSAGES = {{ saved_messages | tojson }};
         const MEMBERS = {{ members | tojson }};
         const CURRENT_MEMBER = {{ current_member | tojson }};
+        const HUDU_ENABLED = {{ hudu_enabled | tojson }};
         const BOARD_OPTIONS = {{ board_options | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
         const SCREENCONNECT_ENABLED = {{ screenconnect_enabled | tojson }};
@@ -768,7 +782,7 @@
         const $ = function(id){ return document.getElementById(id); };
         const aiThread = $('aiThread'), liveThread = $('liveThread'), callThread = $('callThread');
         const chatInput = $('chatInput'), sendBtn = $('sendBtn'), composer = $('composer');
-        const saveBtn = $('saveBtn'), resolveBtn = $('resolveBtn'), addTimeBtn = $('addTimeBtn'), clearBtn = $('clearBtn');
+        const saveBtn = $('saveBtn'), resolveBtn = $('resolveBtn'), addTimeBtn = $('addTimeBtn'), clearBtn = $('clearBtn'), kbBtn = $('kbBtn');
         const modelSelect = $('modelSelect'), modeText = $('modeText');
         const contextCard = $('contextCard');
         const aiTab = $('aiTab'), liveTab = $('liveTab'), callTab = $('callTab');
@@ -790,6 +804,7 @@
         const resolveSkipEmailBtn = $('resolveSkipEmail'), resolveSendEmailBtn = $('resolveSendEmail');
         // confirm
         const confirmOverlay = $('confirmOverlay'), confirmMessage = $('confirmMessage'), confirmCancel = $('confirmCancel'), confirmOk = $('confirmOk');
+        const identityOverlay = $('identityOverlay'), identityMessage = $('identityMessage'), identityMember = $('identityMember'), identityCancel = $('identityCancel'), identityOk = $('identityOk');
 
         const ticketRef = '#' + TICKET.id + (TICKET.company_name ? ' · ' + TICKET.company_name : '');
 
@@ -1031,8 +1046,19 @@
             pendingActions = [];
             renderAttachmentStrip();
 
+            const displayContent = userContent;
+            const kbCtx = kbDraftContext();
+            if (kbCtx) {
+                if (typeof userContent === 'string') userContent = userContent + kbCtx;
+                else {
+                    const parts = userContent.slice();
+                    const tp = parts.find(function(p){ return p.type === 'text'; });
+                    if (tp) tp.text = tp.text + kbCtx; else parts.unshift({ type: 'text', text: kbCtx.trim() });
+                    userContent = parts;
+                }
+            }
             messages.push({ role: 'user', content: userContent });
-            addMessage('user', userContent);
+            addMessage('user', displayContent);
 
             const bubble = createStreamingMessage();
             let fullContent = '';
@@ -1132,6 +1158,45 @@
         }
         confirmCancel.addEventListener('click', function(){ confirmOverlay.classList.remove('show'); if (confirmResolve) confirmResolve(false); });
         confirmOk.addEventListener('click', function(){ confirmOverlay.classList.remove('show'); if (confirmResolve) confirmResolve(true); });
+
+        // ===== Identity check =====
+        // The pod GUESSES who is working (see resolveIdentity) — often the ticket
+        // owner, who may not be the tech at the keyboard. Anything that credits a
+        // technician in ConnectWise (time, resolve/close, customer email) first
+        // asks them to confirm or change the name. Resolves with the confirmed
+        // member identifier, or null when cancelled.
+        let identityResolve = null;
+        function confirmIdentity(what, initial){
+            return new Promise(function(resolve){
+                identityMember.innerHTML = '';
+                if (!MEMBERS || MEMBERS.length === 0) {
+                    const opt = document.createElement('option'); opt.value = initial || ''; opt.textContent = initial ? memberName(initial) : 'No technicians available'; identityMember.appendChild(opt);
+                } else {
+                    const ph = document.createElement('option'); ph.value = ''; ph.textContent = 'Select technician…'; identityMember.appendChild(ph);
+                    MEMBERS.forEach(function(m){ const opt = document.createElement('option'); opt.value = m.identifier; opt.textContent = m.name; identityMember.appendChild(opt); });
+                    identityMember.value = memberInList(initial) ? initial : '';
+                }
+                identityMessage.textContent = 'Before you ' + what + ', check the technician this will be credited to in ConnectWise. '
+                    + (initial ? 'It is currently set to ' + memberName(initial) + ' (' + identitySource.toLowerCase() + '). ' : '')
+                    + 'Change it if that is not you.';
+                identityOverlay.classList.add('show');
+                identityResolve = resolve;
+            });
+        }
+        identityCancel.addEventListener('click', function(){ identityOverlay.classList.remove('show'); if (identityResolve) identityResolve(null); });
+        identityOk.addEventListener('click', function(){
+            const member = identityMember.value;
+            if (!member) { showToast('Select a technician', 'error'); return; }
+            identityOverlay.classList.remove('show');
+            if (member !== selectedMember) {
+                selectedMember = member; setStoredMember(member);
+                identitySource = 'Confirmed by technician';
+                $('setIdentity').textContent = memberName(member);
+                $('setIdentitySrc').textContent = identitySource;
+            }
+            if (memberInList(member)) timeMember.value = member;
+            if (identityResolve) identityResolve(member);
+        });
 
         function showToast(message, type){
             type = type || 'success';
@@ -1497,11 +1562,15 @@
             openResolveEmailStep();
         });
         timeSubmitBtn.addEventListener('click', async function(){
-            const member = timeMember.value;
+            let member = timeMember.value;
             if (!member) { showToast('Select a technician', 'error'); return; }
             const span = currentSpanHours();
             if (span === null) { showToast('Enter date, start and end time', 'error'); return; }
             if (span <= 0) { showToast('End time must be after start time', 'error'); return; }
+            if (timeMode !== 'resolve') {
+                member = await confirmIdentity('log this time', member);
+                if (!member) return;
+            }
             selectedMember = member; setStoredMember(member);
             const startISO = buildLocalDate(timeDate.value, timeStartInput.value).toISOString();
             const endISO = buildLocalDate(timeDate.value, timeEndInput.value).toISOString();
@@ -1575,6 +1644,7 @@
         const ACTION_ICONS = {
             add_internal_note: 'lock', add_discussion_note: 'forum',
             send_customer_email: 'mail', set_ticket_status: 'flag', log_time: 'schedule',
+            create_hudu_article: 'menu_book',
         };
 
         function addToolChip(tool, bubble){
@@ -1644,7 +1714,16 @@
             head.appendChild(badge); head.appendChild(titles);
             card.appendChild(head);
 
-            let field = null;
+            let field = null, titleField = null;
+            if (a.action === 'create_hudu_article') {
+                // Title above the body — the article needs both, and the tech
+                // should be able to rename it without touching the steps.
+                titleField = document.createElement('input');
+                titleField.type = 'text'; titleField.className = 'inp'; titleField.placeholder = 'Article title';
+                titleField.value = a.article_title || '';
+                titleField.style.marginBottom = '8px';
+                card.appendChild(titleField);
+            }
             if (a.action === 'set_ticket_status') {
                 field = document.createElement('select');
                 field.className = 'inp';
@@ -1687,6 +1766,7 @@
                 expand.addEventListener('click', function(){ openEditor(field, a.title || 'Edit'); });
                 wrap.appendChild(field); wrap.appendChild(expand);
                 card.appendChild(wrap);
+                if (titleField) card._kbFields = { title: titleField, body: field };
             } else if (a.text) {
                 const preview = document.createElement('div');
                 preview.className = 'note-body';
@@ -1709,6 +1789,7 @@
                 if (liveActionCards[a.action] === card) delete liveActionCards[a.action];
                 actions.remove();
                 if (field) field.disabled = true;
+                if (titleField) titleField.disabled = true;
                 const result = document.createElement('div');
                 result.className = 'ac-result' + (state === 'done' ? '' : ' muted');
                 const icon = document.createElement('span'); icon.className = 'i';
@@ -1737,7 +1818,10 @@
                         ? 'Pick a status from the list first' : 'Nothing to save — the draft is empty', 'error');
                     return;
                 }
+                if (titleField && !titleField.value.trim()) { showToast('Give the article a title', 'error'); return; }
                 if (a.action === 'send_customer_email') {
+                    const member = await confirmIdentity('send this email', selectedMember);
+                    if (!member) return;
                     const ok = await showConfirm('Send this email to ' + (TICKET.contact_name || 'the customer') + '?');
                     if (!ok) return;
                 }
@@ -1753,11 +1837,23 @@
                             text: a.action === 'set_ticket_status' ? '' : value,
                             status_name: a.action === 'set_ticket_status' ? value : '',
                             member_identifier: selectedMember || null,
+                            title: titleField ? titleField.value.trim() : '',
+                            hudu_scope: a.hudu_scope || 'global',
                         }),
                     });
                     const data = await response.json();
                     if (data && data.success) {
                         settle('done', data.message || 'Done');
+                        if (a.action === 'create_hudu_article') {
+                            setActContent(kbBtn, 'check', 'KB added');
+                            if (data.url) {
+                                const link = document.createElement('a');
+                                link.href = data.url; link.target = '_blank'; link.rel = 'noopener';
+                                link.textContent = 'Open in Hudu';
+                                link.style.cssText = 'display:inline-block;margin:6px 0 0 26px;font-size:12px;color:inherit;text-decoration:underline;';
+                                card.appendChild(link);
+                            }
+                        }
                         recordActionOutcome('[Done — ' + (data.message || a.action) + ']');
                     } else {
                         confirmBtn.disabled = false; dismissBtn.disabled = false; confirmBtn.textContent = original;
@@ -1771,6 +1867,42 @@
 
             aiThread.appendChild(card);
             scrollThread(aiThread);
+        }
+
+        // ===== Create KB (Hudu) =====
+        // The button sends a normal chat turn, so the usual tool loop runs:
+        // Hercules searches Hudu, links an existing article, or proposes a new
+        // one as an action card with an editable title and body. From there the
+        // tech can edit the draft by hand, or ask Hercules for changes in chat —
+        // every chat turn carries the draft as it currently stands (see
+        // kbDraftContext), and a revised proposal replaces the card.
+        function liveKbCard(){
+            const card = liveActionCards.create_hudu_article;
+            return (card && card.isConnected && card._kbFields && !card._kbFields.body.disabled) ? card : null;
+        }
+        function startKbArticle(){
+            if (!HUDU_ENABLED || currentMode === 'call') return;
+            if (liveMode) { showToast('Switch back to the Hercules chat to create a KB article', 'error'); return; }
+            const existing = liveKbCard();
+            if (existing) {
+                existing.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                showToast('The KB draft is on screen — edit it, or tell Hercules what to change');
+                return;
+            }
+            if (isStreaming) { showToast('Wait for Hercules to finish, then try again', 'error'); return; }
+            chatInput.value = 'Create a Hudu KB article for this fix. Check Hudu for an existing article covering it first; '
+                + 'if there is one, link it and tell me. Otherwise draft a short one (purpose line, then numbered steps) for me to review.';
+            sendMessage();
+        }
+        function kbDraftContext(){
+            const card = liveKbCard();
+            if (!card) return '';
+            const title = card._kbFields.title.value.trim();
+            const body = card._kbFields.body.value.trim();
+            if (!title && !body) return '';
+            return '\n\n[Hudu KB draft currently on the technician\'s screen — they may have edited it by hand, so this is the '
+                + 'latest version. If they ask for changes, call create_hudu_article again with the FULL revised article; '
+                + 'it replaces this draft. Not yet saved to Hudu.]\nTitle: ' + title + '\n' + body;
         }
 
         // ===== Resolve (multi-step) =====
@@ -1827,10 +1959,16 @@
             resolveSkipEmailBtn.disabled = false; resolveSendEmailBtn.disabled = false;
             openResolveSheet();
         }
-        function finalizeResolve(sendEmail){
+        async function finalizeResolve(sendEmail){
             if (!resolveState) return;  // guard against a double-click while the sheet slides away
             resolveSkipEmailBtn.disabled = true;
             resolveSendEmailBtn.disabled = true;
+            const member = await confirmIdentity(
+                sendEmail ? 'send this resolution and close the ticket' : 'resolve this ticket',
+                resolveState.member || selectedMember);
+            if (!member) { resolveSkipEmailBtn.disabled = false; resolveSendEmailBtn.disabled = false; return; }
+            if (!resolveState) return;  // the sheet was closed while the dialog was up
+            resolveState.member = member;
             const payload = {
                 ticket_id: TICKET.id,
                 internal_note: resolveState.internalNote,
@@ -2690,6 +2828,7 @@
         addTimeBtn.addEventListener('click', function(){ openTimeModal('add'); });
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
+        kbBtn.addEventListener('click', startKbArticle);
         clearBtn.addEventListener('click', clearChat);
         aiTab.addEventListener('click', function(){ setMode('ai'); });
         liveTab.addEventListener('click', function(){ setMode('live'); });

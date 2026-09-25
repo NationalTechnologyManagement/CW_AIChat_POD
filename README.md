@@ -16,6 +16,10 @@ current ticket.
   The work log matters: ConnectWise stores time-entry notes on the entry, not as
   ticket notes, so most of "what did we actually do" lives there.
 - `list_ticket_statuses` — the statuses this ticket's board really offers.
+- `search_hudu` / `get_hudu_article` / `get_hudu_asset` — the client's Hudu
+  documentation: knowledge-base articles, documented assets and their fields,
+  and the company notes. See *Hudu setup* below. Only offered when Hudu is
+  configured.
 
 **Actions it proposes** — the tech gets an editable card in the pod and nothing
 reaches ConnectWise until they press the button:
@@ -27,6 +31,7 @@ reaches ConnectWise until they press the button:
 | "draft an email and send it" | Email to the contact, editable, confirm to send |
 | "put this in progress" | Status picker for this board |
 | "log 30 minutes" | The Add Time sheet, pre-filled |
+| **Create KB** button, or "write this up in Hudu" | A Hudu KB article draft, if no article covers the fix yet |
 
 The model can only ever *propose* a write. `/action` performs it, carrying
 whatever the technician actually approved, attributed to them.
@@ -42,6 +47,13 @@ Internal Analysis alongside the time entry unless that box is unticked.
 **Resolve** is unchanged in shape: it drafts the internal resolution note
 (technician-only) and the customer-facing Resolution, both editable, then logs
 time and moves the ticket.
+
+**Who gets the credit.** The pod guesses the working technician (the member
+ConnectWise passes in the pod URL, else the ticket owner, else the first
+resource). That guess can be wrong — a tech closing a colleague's ticket — so
+before logging time, resolving, or sending a customer email the pod shows a
+"logged under" check with a technician picker. The tech confirms the name or
+changes it; the chosen member is remembered for the rest of the session.
 
 ## Pod size
 
@@ -89,6 +101,38 @@ Backstage logon session.
 The Manage API member needs inquire access to Companies > Configurations and
 Service Desk > Service Tickets. ScreenConnect technicians still authenticate
 normally and must have permission to view and join the matched Access session.
+
+## Hudu setup
+
+Create an API key in Hudu (**Admin > API Keys**, read access is enough) and set:
+
+```env
+HUDU_BASE_URL=https://your-instance.huducloud.com
+HUDU_API_KEY=the-key
+```
+
+Hercules then searches Hudu on the tech's behalf: articles, assets (with the
+fields recorded on them, such as VPN or firewall details) and the client's
+company notes. Results are scoped to the ticket's client by default; the
+assistant can widen to NTM-wide articles or all clients when asked. Passwords
+are never fetched — the assistant points the tech at Hudu for those.
+
+**Capturing fixes.** The **Create KB** button in the pod asks Hercules to
+write the fix up. It searches Hudu for an existing article first and links it
+if there is one; otherwise it drafts an article in the style of the existing
+KB (a purpose line, then short numbered steps) as a card with an editable
+title and body. From there the tech can edit the draft directly, or ask
+Hercules for changes in chat — each message carries the draft as it currently
+stands, and the revised proposal replaces the card. Nothing is written until
+the tech presses **Create article**. Passwords never go in an article.
+
+**Company matching.** Hudu's ConnectWise integration stamps each Hudu company
+with its ConnectWise company id, and Hercules resolves the ticket's company
+through that (falling back to an exact name match). The answer is stored in
+the `hudu_companies` table and in memory, so it is looked up once per client,
+not on every chat turn; the pod also pre-resolves it when a ticket opens. A
+"not in Hudu" answer is retried after six hours in case the client gets synced
+later. To force a re-check, delete that client's row from `hudu_companies`.
 
 ## Admin dashboard settings
 

@@ -26,6 +26,7 @@ import call_bus
 import cw_client
 import cw_tools
 import db
+import hudu_client
 import live
 import openrouter_client
 import screenconnect_client
@@ -53,6 +54,7 @@ LIVE_SESSION_TTL_SECONDS = int(os.getenv("LIVE_SESSION_TTL_SECONDS", "21600"))  
 async def lifespan(app: FastAPI):
     cw_client.init_client()
     screenconnect_client.init_client()
+    hudu_client.init_client()
     await db.init_pool()
     await live.init_live()
     await call_bus.start()
@@ -72,6 +74,7 @@ async def lifespan(app: FastAPI):
     await _stop_call_purge()
     await _drain_call_summaries()
     await screenconnect_client.close_client()
+    await hudu_client.close_client()
     await call_bus.stop()
     await live.close_live()
     await db.close_pool()
@@ -373,6 +376,17 @@ TOOL_LINES = {
         "  thing and was fixed by ...\".",
     "list_ticket_statuses":
         "- list_ticket_statuses — the statuses this ticket's board actually offers.",
+    "search_hudu":
+        "- search_hudu — searches Hudu, NTM's documentation, for THIS client: how their VPN,\n"
+        "  firewall, servers, applications and licensing are set up, their company notes (ISP,\n"
+        "  points of contact, quirks) and any procedures. Whenever the tech asks how something\n"
+        "  is configured here, what the details of X are, or whether we have a doc for this,\n"
+        "  search Hudu FIRST and answer from it — cite the article/asset name and link. Hudu\n"
+        "  never hands you passwords; tell the tech to open the client's passwords in Hudu.",
+    "get_hudu_article":
+        "- get_hudu_article — reads a Hudu article in full (by id from search_hudu).",
+    "get_hudu_asset":
+        "- get_hudu_asset — reads every documented field of a Hudu asset (by id from search_hudu).",
     "add_internal_note":
         "- add_internal_note — technician-only note on Internal Analysis.",
     "add_discussion_note":
@@ -383,6 +397,9 @@ TOOL_LINES = {
         "- set_ticket_status — moves the ticket (e.g. \"put this in progress\").",
     "log_time":
         "- log_time — opens the time entry form with a work note and duration filled in.",
+    "create_hudu_article":
+        "- create_hudu_article — drafts a short Hudu KB article (purpose line + numbered steps)\n"
+        "  capturing a reusable fix, for the tech to review and save.",
 }
 
 
@@ -392,16 +409,20 @@ def _tools_section(available: list[str]) -> str:
     A ticket with no contact has no send_customer_email; promising it anyway is
     how the assistant ends up insisting it can do something it can't.
     """
-    reads = [TOOL_LINES[n] for n in ("search_tickets", "get_ticket_details", "list_ticket_statuses")
+    reads = [TOOL_LINES[n] for n in ("search_tickets", "get_ticket_details", "list_ticket_statuses",
+                                     "search_hudu", "get_hudu_article", "get_hudu_asset")
              if n in available]
+    has_hudu = "search_hudu" in available
     writes = [TOOL_LINES[n] for n in ("add_internal_note", "add_discussion_note",
-                                      "send_customer_email", "set_ticket_status", "log_time")
+                                      "send_customer_email", "set_ticket_status", "log_time",
+                                      "create_hudu_article")
               if n in available]
     if not reads and not writes:
         return ""
 
-    section = ["\n\nWHAT YOU CAN DO IN CONNECTWISE:",
-               "You are not a read-only chat window — you have live ConnectWise tools. Call them; never",
+    systems = "ConnectWise and Hudu" if has_hudu else "ConnectWise"
+    section = [f"\n\nWHAT YOU CAN DO IN {systems.upper()}:",
+               f"You are not a read-only chat window — you have live {systems} tools. Call them; never",
                "describe them, never ask the tech to go do it themselves, and never claim you lack access.",
                "This list is exhaustive: if something is not here, you cannot do it on this ticket — say so",
                "plainly and tell the tech what to do in ConnectWise instead."]
@@ -425,6 +446,21 @@ def _tools_section(available: list[str]) -> str:
             "- One action per request, and only the action asked for. Never fire a write tool on your\n"
             "  own initiative.\n"
             "- After proposing, say one short line — the draft is on screen; don't repeat it in chat.")
+        if "create_hudu_article" in available:
+            section.append(
+                "\nWriting the fix up in Hudu (when the tech presses Create KB or asks for a KB article):\n"
+                "- First call search_hudu for an existing article on that fix (scope 'all'). If one\n"
+                "  exists, link it in your reply and stop — do not create a duplicate.\n"
+                "- Otherwise propose create_hudu_article in the style of the existing KB: one 'Purpose:'\n"
+                "  line, then short numbered steps, nothing else. A simple fix is 3-6 steps. Global\n"
+                "  unless it only makes sense at this client. Work from what was actually done on the\n"
+                "  ticket — never invent steps.\n"
+                "- The draft then sits on their screen. They may edit it by hand or ask you for changes;\n"
+                "  their message will carry the current draft. Revise the FULL article and call\n"
+                "  create_hudu_article again — it replaces the draft. Keep iterating until they save.\n"
+                "- Never put passwords or customer personal details in an article. Don't push a KB\n"
+                "  article unprompted; if the tech says the issue is fixed and it looks reusable, one\n"
+                "  short clause pointing at the Create KB button is plenty.")
     return "\n".join(section)
 
 
@@ -610,6 +646,7 @@ def build_system_prompt(
         + ", ".join(have)
         + " above, plus similar-ticket history when present"
         + (", plus live search across every other ticket in ConnectWise" if tools_enabled else "")
+        + (" and the client's Hudu documentation" if tools_enabled and hudu_client.is_configured() else "")
         + ". When the tech asks what happened, "
           "who did what, when a status changed, or what was already tried, the answer is in "
           "those sections — read them before answering"
@@ -686,6 +723,7 @@ async def pod(
             "current_member": member.strip(),
             "cw_manage_url": CW_MANAGE_URL,
             "screenconnect_enabled": screenconnect_client.is_configured(),
+            "hudu_enabled": hudu_client.is_configured(),
             "live_active": False,
             "error": None,
         }
@@ -701,6 +739,10 @@ async def pod(
             db.get_messages(ticketId),
             _safe_get_members(),
         )
+
+        # Resolve this client's Hudu company in the background (cached after the
+        # first time) so the assistant's first Hudu lookup doesn't pay for it.
+        hudu_client.warm_company(ticket.get("company_id"), ticket.get("company_name") or "")
 
         # Board categorization options + similar tickets — both non-critical.
         board_options, duplicates = EMPTY_OPTIONS, []
@@ -986,6 +1028,13 @@ def _tool_label(name: str, args: dict) -> str:
         return f"Reading ticket #{args.get('ticket_id')}"
     if name == "list_ticket_statuses":
         return "Checking the board's statuses"
+    if name == "search_hudu":
+        q = str(args.get("query") or "").strip()
+        return f"Searching Hudu for “{q}”" if q else "Reading the client's Hudu documentation"
+    if name == "get_hudu_article":
+        return "Reading a Hudu article"
+    if name == "get_hudu_asset":
+        return "Reading a Hudu asset"
     return f"Running {name}"
 
 
@@ -1186,6 +1235,8 @@ class ActionRequest(BaseModel):
     text: str = ""
     status_name: str = ""
     member_identifier: str | None = None
+    title: str = ""            # create_hudu_article
+    hudu_scope: str = "global"  # create_hudu_article: 'this_client' | 'global'
 
 
 @app.post("/action")
@@ -1197,7 +1248,8 @@ async def run_action(request: ActionRequest):
     the normal Add Time sheet and goes through /add-time.
     """
     action = request.action
-    if action not in ("add_internal_note", "add_discussion_note", "send_customer_email", "set_ticket_status"):
+    if action not in ("add_internal_note", "add_discussion_note", "send_customer_email", "set_ticket_status",
+                      "create_hudu_article"):
         return JSONResponse(status_code=400, content={"success": False, "error": f"Unsupported action '{action}'"})
 
     text = (request.text or "").strip()
@@ -1213,7 +1265,7 @@ async def run_action(request: ActionRequest):
     author = request.member_identifier or ticket.get("owner_identifier")
     # Without a member ConnectWise records the write against the API user, which
     # makes the ticket history lie about who did it.
-    if not author and action != "set_ticket_status":
+    if not author and action not in ("set_ticket_status", "create_hudu_article"):
         return JSONResponse(status_code=400, content={
             "success": False,
             "error": "No technician is set for this pod — open Add Time and pick yourself first.",
@@ -1239,6 +1291,33 @@ async def run_action(request: ActionRequest):
                 ticket_id=request.ticket_id, text=text, member_identifier=author,
             )
             message = f"Email sent to {ticket.get('contact_name') or 'the contact'}"
+
+        elif action == "create_hudu_article":
+            # The only write that goes to Hudu rather than ConnectWise. The body
+            # is plain text the tech edited; it becomes the same simple HTML the
+            # existing KB articles use.
+            if not hudu_client.is_configured():
+                return JSONResponse(status_code=400, content={
+                    "success": False, "error": "Hudu is not configured on this service."})
+            title = (request.title or "").strip()
+            if not title:
+                return JSONResponse(status_code=400, content={
+                    "success": False, "error": "Give the article a title first."})
+            company_id = None
+            if request.hudu_scope == "this_client":
+                company = await hudu_client.resolve_company(
+                    ticket.get("company_id"), ticket.get("company_name") or "")
+                if not company:
+                    return JSONResponse(status_code=400, content={
+                        "success": False,
+                        "error": f"{ticket.get('company_name') or 'This company'} is not in Hudu — "
+                                 "save it to the NTM-wide knowledge base instead."})
+                company_id = company["hudu_company_id"]
+            created = await hudu_client.create_article(title, hudu_client.text_to_html(text), company_id)
+            url = created.get("url") or hudu_client.base_url()
+            message = f"Hudu article created: {created.get('name') or title} — {url}"
+            print(f"[action] create_hudu_article '{title}' (company {company_id}) -> {created.get('id')}")
+            return {"success": True, "message": message, "url": url}
 
         else:  # set_ticket_status
             board_id = ticket.get("board_id")
