@@ -1608,7 +1608,8 @@
                     closeTimeSheet();
                     const hrs = (data.actual_hours != null ? data.actual_hours : span);
                     if (data.warning) showBanner(data.warning, 'error');
-                    else showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member) + (data.email_sent ? ' · update emailed' : ''));
+                    else showToast('Logged ' + hrs.toFixed(2) + ' hr for ' + memberName(member) + (data.email_sent ? ' · update emailed' : '')
+                        + (data.status_moved_to ? ' · moved to ' + data.status_moved_to : ''));
                 } else { showToast(data.error || 'Failed to log time', 'error'); }
             } catch (err) {
                 // The write may well have landed — saying "try again" would invite

@@ -116,6 +116,44 @@ class ActionEndpointTests(unittest.TestCase):
         )
 
 
+class TimeStatusTests(unittest.TestCase):
+    """Board 49 refuses time on most statuses: /add-time moves the ticket to
+    In Progress first, but never reopens a closed ticket."""
+
+    STATUSES = [
+        {"id": 874, "name": "New", "inactive": False, "closed": False, "no_time_entry": True},
+        {"id": 878, "name": "In Progress", "inactive": False, "closed": False, "no_time_entry": False},
+        {"id": 882, "name": "Closed", "inactive": False, "closed": True, "no_time_entry": True},
+    ]
+    BODY = {"ticket_id": 500, "time_start": "2026-07-31T09:00:00Z",
+            "time_end": "2026-07-31T09:30:00Z", "notes": "Fixed it.", "member_identifier": "dana.tech"}
+
+    def run_add_time(self, status):
+        calls = []
+        ticket = {"id": 500, "board_id": 49, "status": status}
+        set_status = mock.AsyncMock(side_effect=lambda *a: calls.append("status") or {})
+        entry = mock.AsyncMock(side_effect=lambda **k: calls.append("time") or {"id": 9, "actualHours": 0.5})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)),              mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=self.STATUSES)),              mock.patch.object(cw_client, "set_ticket_status", set_status),              mock.patch.object(cw_client, "create_time_entry", entry):
+            response = TestClient(main.app).post("/add-time", json=self.BODY, headers=AUTH)
+        return response.json(), set_status, calls
+
+    def test_a_blocking_status_moves_to_in_progress_before_the_time_entry(self):
+        body, set_status, calls = self.run_add_time("New")
+        self.assertTrue(body["success"])
+        set_status.assert_awaited_once_with(500, 878)
+        self.assertEqual(calls, ["status", "time"])
+        self.assertEqual(body["status_moved_to"], "In Progress")
+
+    def test_a_status_that_allows_time_is_left_alone(self):
+        body, set_status, _ = self.run_add_time("In Progress")
+        set_status.assert_not_awaited()
+        self.assertIsNone(body["status_moved_to"])
+
+    def test_a_closed_ticket_is_never_reopened_to_log_time(self):
+        _, set_status, _ = self.run_add_time("Closed")
+        set_status.assert_not_awaited()
+
+
 class AddTimeTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(main.app)

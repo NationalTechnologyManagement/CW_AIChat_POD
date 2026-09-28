@@ -43,6 +43,10 @@ RESOLVE_STATUS_NAMES = [
     n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed").split(",") if n.strip()
 ]
 RESOLVE_STATUS_NAME = " / ".join(RESOLVE_STATUS_NAMES)
+# Where a ticket goes when its current status refuses time entries. Support Tier 1
+# (board 49) blocks time on every status except In Progress, which sends no
+# customer email there.
+TIME_ENTRY_STATUS_NAME = os.getenv("TIME_ENTRY_STATUS_NAME", "In Progress")
 # Shared secret for the server-to-server live-chat bridge (Hercules -> /live/history).
 LIVE_BRIDGE_SECRET = os.getenv("LIVE_BRIDGE_SECRET", "")
 # Shared secret for the voice agent's call-transcript bridge (ntm-voice-agent ->
@@ -1190,8 +1194,15 @@ async def add_time(request: AddTimeRequest):
     The tech sets the actual start and end time they worked; ConnectWise records
     the entry under their member identifier — never the API/automation user. The
     time entry is the critical write: if it fails nothing else is attempted, so a
-    retry can't double-post the email.
+    retry can't double-post the email. A status that refuses time entries is
+    moved to In Progress first (see _ensure_time_allowed).
     """
+    moved_to = None
+    try:
+        moved_to = await _ensure_time_allowed(await cw_client.get_ticket(request.ticket_id))
+    except Exception as e:
+        # Best effort: the time entry below still runs and reports CW's own error.
+        print(f"[add-time] ticket {request.ticket_id} status pre-check failed: {e!r}")
     try:
         result = await cw_client.create_time_entry(
             ticket_id=request.ticket_id,
@@ -1229,8 +1240,10 @@ async def add_time(request: AddTimeRequest):
 
     _invalidate_ticket_ctx(request.ticket_id)
     message = "Time entry saved" + (" and update emailed" if email_sent else "")
+    if moved_to:
+        message += f" (ticket moved to {moved_to} so time could be logged)"
     return {"success": True, "actual_hours": hours, "email_sent": email_sent,
-            "warning": warning, "message": message}
+            "warning": warning, "message": message, "status_moved_to": moved_to}
 
 
 class ActionRequest(BaseModel):
@@ -1564,6 +1577,31 @@ def _cw_error(e: Exception) -> str:
     return str(e)[:180] or e.__class__.__name__
 
 
+async def _ensure_time_allowed(ticket: dict) -> str | None:
+    """Move the ticket to TIME_ENTRY_STATUS_NAME when its current status refuses
+    time entries, so the entry about to be logged isn't rejected by ConnectWise.
+
+    Returns the status name it moved to, or None when no move was needed. Closed
+    statuses are left alone (logging time must not silently reopen a ticket) and
+    so are boards without a usable target — the time entry then fails with
+    ConnectWise's own error as before.
+    """
+    board_id = ticket.get("board_id")
+    if not board_id:
+        return None
+    statuses = await cw_client.get_board_statuses(board_id)
+    current = next((s for s in statuses if s["name"] == ticket.get("status")), None)
+    if not current or not current.get("no_time_entry") or current.get("closed"):
+        return None
+    target = cw_client.match_status(statuses, TIME_ENTRY_STATUS_NAME)
+    if not target or target.get("no_time_entry") or target["id"] == current["id"]:
+        return None
+    await cw_client.set_ticket_status(ticket["id"], target["id"])
+    _invalidate_ticket_ctx(ticket["id"])
+    print(f"[time] ticket {ticket['id']}: '{current['name']}' blocks time entries — moved to '{target['name']}'")
+    return target["name"]
+
+
 async def _resolve_status_id(board_id: int) -> int | None:
     """The board's resolved status id — the first of RESOLVE_STATUS_NAMES the board
     has (exact, else closest usable match; never a retired or automation one)."""
@@ -1614,6 +1652,12 @@ async def finalize_resolve(request: FinalizeResolveRequest):
     #    Internal Analysis note. This is INTERNAL ONLY — never the Resolution and
     #    never customer-visible. If it fails we abort cleanly — nothing saved — so a
     #    retry won't double up.
+    if has_time:
+        try:
+            if await _ensure_time_allowed(ticket):
+                result["moved_to_time_status"] = True
+        except Exception as e:
+            print(f"[finalize] ticket {request.ticket_id} status pre-check failed: {e!r}")
     try:
         if has_time:
             entry = await cw_client.create_time_entry(
