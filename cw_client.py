@@ -590,15 +590,17 @@ def usable_statuses(statuses: list[dict]) -> list[dict]:
     """Active statuses a technician would actually pick.
 
     Real boards carry retired scaffolding — "DNU-*", "AUTOMATED STATUS BELOW (DO
-    NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. None of those should
-    ever reach a status picker or the assistant's list of options.
+    NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. Support Tier 1 (board 49)
+    instead marks its automation-driven statuses with a trailing "*" ("Client
+    Contact 1*", "Closed Pending*"). None of those should ever reach a status
+    picker or the assistant's list of options.
     """
     keep = []
     for s in statuses:
         name = (s.get("name") or "").strip().lower()
         if s.get("inactive") or not name:
             continue
-        if "automat" in name or "do not use" in name or name.startswith("dnu"):
+        if "automat" in name or "do not use" in name or name.startswith("dnu") or name.endswith("*"):
             continue
         keep.append(s)
     return keep
