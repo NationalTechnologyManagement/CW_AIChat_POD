@@ -37,7 +37,12 @@ if not POD_SECRET:
     raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
-RESOLVE_STATUS_NAME = os.getenv("RESOLVE_STATUS_NAME", "Resolved")
+# Comma-separated, tried in order: the old Support Tier1 board (#34) resolves to
+# "Resolved", the new Support Tier 1 board (#49) to "Completed".
+RESOLVE_STATUS_NAMES = [
+    n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed").split(",") if n.strip()
+]
+RESOLVE_STATUS_NAME = " / ".join(RESOLVE_STATUS_NAMES)
 # Shared secret for the server-to-server live-chat bridge (Hercules -> /live/history).
 LIVE_BRIDGE_SECRET = os.getenv("LIVE_BRIDGE_SECRET", "")
 # Shared secret for the voice agent's call-transcript bridge (ntm-voice-agent ->
@@ -1560,13 +1565,16 @@ def _cw_error(e: Exception) -> str:
 
 
 async def _resolve_status_id(board_id: int) -> int | None:
-    """The board's resolved status id — RESOLVE_STATUS_NAME exactly, else the
-    closest usable 'resolved'-ish status (never a retired or automation one)."""
+    """The board's resolved status id — the first of RESOLVE_STATUS_NAMES the board
+    has (exact, else closest usable match; never a retired or automation one)."""
     if not board_id:
         return None
     statuses = await cw_client.get_board_statuses(board_id)
-    target = cw_client.match_status(statuses, RESOLVE_STATUS_NAME)
-    return target["id"] if target else None
+    for name in RESOLVE_STATUS_NAMES:
+        target = cw_client.match_status(statuses, name)
+        if target:
+            return target["id"]
+    return None
 
 
 @app.post("/finalize-resolve")
