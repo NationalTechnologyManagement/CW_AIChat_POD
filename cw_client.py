@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import base64
 from datetime import datetime, timedelta, timezone
 
@@ -586,24 +587,51 @@ def _status_key(name: str) -> str:
     return "".join(c for c in (name or "").lower() if c.isalnum())
 
 
+# Board 49 (Support Tier 1) suffixes MANY status names with "*" — including the
+# ones technicians use every day: "New*", "Completed*", "Waiting on Client*",
+# "Waiting to Drop Off*", "Ready for Pickup*". Only some "*" statuses are driven by
+# automation and belong out of the picker. Hiding every "*" name (2026-09-28)
+# also hid "Completed*", so every Resolve from then until 2026-10-02 ended with
+# "status NOT changed" and techs completed tickets by hand.
+_AUTOMATION_STAR_RE = re.compile(r"client contact|closed pending|no response|cancel|automat")
+
+
 def usable_statuses(statuses: list[dict]) -> list[dict]:
     """Active statuses a technician would actually pick.
 
     Real boards carry retired scaffolding — "DNU-*", "AUTOMATED STATUS BELOW (DO
-    NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. Support Tier 1 (board 49)
-    instead marks its automation-driven statuses with a trailing "*" ("Client
-    Contact 1*", "Closed Pending*"). None of those should ever reach a status
-    picker or the assistant's list of options.
+    NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. On Support Tier 1 (board
+    49) a trailing "*" alone does not mean automation — see _AUTOMATION_STAR_RE for
+    the "*" statuses that actually are ("Client Contact 1*", "Closed Pending*",
+    "Closed (No Response)*", "Closed (Cancelled)*"). None of those should ever
+    reach a status picker or the assistant's list of options.
     """
     keep = []
     for s in statuses:
         name = (s.get("name") or "").strip().lower()
         if s.get("inactive") or not name:
             continue
-        if "automat" in name or "do not use" in name or name.startswith("dnu") or name.endswith("*"):
+        if "automat" in name or "do not use" in name or name.startswith("dnu"):
+            continue
+        if name.endswith("*") and _AUTOMATION_STAR_RE.search(name):
             continue
         keep.append(s)
     return keep
+
+
+def exact_status(statuses: list[dict], wanted: str) -> dict | None:
+    """The ACTIVE status whose normalized name equals `wanted`, ignoring the picker
+    filters entirely ("Completed" == "Completed*" == "completed"). This is what a
+    write target such as the Resolve status must use: a status hidden from the
+    picker for cosmetic reasons must never make the resolve silently skip."""
+    target = _status_key(wanted)
+    if not target:
+        return None
+    hits = [s for s in statuses
+            if not s.get("inactive") and _status_key(s.get("name", "")) == target]
+    if not hits:
+        return None
+    return min(hits, key=lambda s: len(s.get("name") or ""))
 
 
 def match_status(statuses: list[dict], wanted: str) -> dict | None:

@@ -132,6 +132,46 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(cw_client.match_status(statuses, "automated status below"))
         self.assertIsNone(cw_client.match_status(statuses, "DNU-Closed"))
 
+    # Support Tier 1 (board 49) — the statuses the dispatcher saw on live tickets in
+    # the week after the 2026-09-28 board move. Many tech-used names carry a "*".
+    BOARD_49 = [
+        {"id": 1, "name": "New*", "inactive": False},
+        {"id": 2, "name": "In Progress", "inactive": False},
+        {"id": 3, "name": "Completed*", "inactive": False},
+        {"id": 4, "name": "Waiting on Client*", "inactive": False},
+        {"id": 5, "name": "Waiting to Drop Off*", "inactive": False},
+        {"id": 6, "name": "Ready for Pickup*", "inactive": False},
+        {"id": 7, "name": "Client Contact 1*", "inactive": False},
+        {"id": 8, "name": "Client Contact 2*", "inactive": False},
+        {"id": 9, "name": "Closed Pending*", "inactive": False},
+        {"id": 10, "name": "Closed (No Response)*", "inactive": False},
+        {"id": 11, "name": "Closed (Cancelled)*", "inactive": False},
+        {"id": 12, "name": "Closed (Automation)*", "inactive": False},
+        {"id": 13, "name": "DNU-AutoClosed", "inactive": False},
+        {"id": 14, "name": "Resolved-Automation", "inactive": False},
+        {"id": 15, "name": "Completed", "inactive": True},   # retired twin — never a target
+    ]
+
+    def test_board_49_star_statuses_techs_use_stay_in_the_picker(self):
+        names = [s["name"] for s in cw_client.usable_statuses(self.BOARD_49)]
+        self.assertEqual(names, [
+            "New*", "In Progress", "Completed*", "Waiting on Client*",
+            "Waiting to Drop Off*", "Ready for Pickup*",
+        ])
+
+    def test_resolve_target_on_board_49_is_completed_star(self):
+        # 2026-09-28 → 10-02: hiding every "*" name also hid "Completed*", so the
+        # resolve found "No 'Resolved / Completed' status on this board" every time.
+        self.assertEqual(cw_client.exact_status(self.BOARD_49, "Completed")["name"], "Completed*")
+        self.assertEqual(cw_client.match_status(self.BOARD_49, "Completed")["name"], "Completed*")
+        # "Resolved" has no exact twin here, and the fuzzy pass must never settle for
+        # the DNU / automation statuses that merely contain the word.
+        self.assertIsNone(cw_client.exact_status(self.BOARD_49, "Resolved"))
+        self.assertIsNone(cw_client.match_status(self.BOARD_49, "Resolved"))
+        # An inactive status is never a target even on an exact name match.
+        self.assertIsNone(cw_client.exact_status(
+            [{"id": 15, "name": "Completed", "inactive": True}], "Completed"))
+
 
 class ReadToolTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):

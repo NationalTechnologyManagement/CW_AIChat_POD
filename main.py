@@ -1602,17 +1602,36 @@ async def _ensure_time_allowed(ticket: dict) -> str | None:
     return target["name"]
 
 
-async def _resolve_status_id(board_id: int) -> int | None:
-    """The board's resolved status id — the first of RESOLVE_STATUS_NAMES the board
-    has (exact, else closest usable match; never a retired or automation one)."""
+async def _resolve_status(board_id: int) -> dict | None:
+    """The board's resolved status — the first of RESOLVE_STATUS_NAMES the board has.
+
+    Pass 1 is an EXACT normalized name match over every active status on the board,
+    picker filters ignored: board 49's done status is literally "Completed*", and
+    hiding "*" names from the picker (2026-09-28) must never hide the resolve target
+    again. Pass 2 falls back to the picker-filtered fuzzy match, which deliberately
+    can never land on a DNU-/automation status. Returns the status dict (id, name)
+    or None, and logs the board's statuses when nothing matches so the next
+    investigation takes minutes, not days."""
     if not board_id:
         return None
     statuses = await cw_client.get_board_statuses(board_id)
     for name in RESOLVE_STATUS_NAMES:
+        hit = cw_client.exact_status(statuses, name)
+        if hit:
+            return hit
+    for name in RESOLVE_STATUS_NAMES:
         target = cw_client.match_status(statuses, name)
         if target:
-            return target["id"]
+            return target
+    names = [s.get("name") for s in statuses if not s.get("inactive")]
+    print(f"[finalize] board {board_id}: no '{RESOLVE_STATUS_NAME}' status among {names}")
     return None
+
+
+async def _resolve_status_id(board_id: int) -> int | None:
+    """Back-compat wrapper — the id of _resolve_status(), if any."""
+    target = await _resolve_status(board_id)
+    return target["id"] if target else None
 
 
 @app.post("/finalize-resolve")
@@ -1736,13 +1755,18 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             print(f"[finalize] ticket {request.ticket_id} category change failed: {e!r}")
             result["warnings"].append(f"Type/Subtype not set: {_cw_error(e)}")
 
-    # 4. Move to Resolved (best effort — notes/time are already saved).
+    # 4. Move to Resolved / Completed (notes/time are already saved). Every outcome
+    #    is logged: a silent "status left unchanged" is how the 94076 and 94945
+    #    incidents went unnoticed.
     try:
-        status_id = await _resolve_status_id(ticket.get("board_id"))
-        if status_id:
-            await cw_client.set_ticket_status(request.ticket_id, status_id)
+        target = await _resolve_status(ticket.get("board_id"))
+        if target:
+            await cw_client.set_ticket_status(request.ticket_id, target["id"])
             result["status_set"] = True
+            result["status_name"] = target.get("name")
+            print(f"[finalize] ticket {request.ticket_id}: status -> '{target.get('name')}' as {author}")
         else:
+            print(f"[finalize] ticket {request.ticket_id}: status NOT changed — no '{RESOLVE_STATUS_NAME}' status on board {ticket.get('board_id')} ({ticket.get('board')})")
             result["warnings"].append(
                 f"No '{RESOLVE_STATUS_NAME}' status on this board — status left unchanged"
             )

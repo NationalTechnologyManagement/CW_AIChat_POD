@@ -232,5 +232,62 @@ class StatusesEndpointTests(unittest.TestCase):
         self.assertEqual(body["current"], "New")
 
 
+BOARD_49_TICKET = {
+    **TICKET, "id": 94945, "board": "Support Tier 1", "board_id": 49, "status": "In Progress",
+}
+BOARD_49_STATUSES = [
+    {"id": 901, "name": "New*", "inactive": False, "closed": False, "no_time_entry": False},
+    {"id": 626, "name": "In Progress", "inactive": False, "closed": False, "no_time_entry": False},
+    {"id": 903, "name": "Completed*", "inactive": False, "closed": True, "no_time_entry": False},
+    {"id": 907, "name": "Client Contact 1*", "inactive": False, "closed": False, "no_time_entry": False},
+    {"id": 913, "name": "DNU-AutoClosed", "inactive": False, "closed": True, "no_time_entry": True},
+    {"id": 914, "name": "Resolved-Automation", "inactive": False, "closed": True, "no_time_entry": True},
+]
+
+
+class FinalizeResolveStatusTests(unittest.TestCase):
+    """Regression for tickets 94076 / 94945: Resolve must actually move the ticket."""
+
+    def test_resolve_on_support_tier_1_moves_the_ticket_to_completed_star(self):
+        client = TestClient(main.app)
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=BOARD_49_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 94945,
+                "internal_note": "Rebooted, cleared the stuck Outlook add-in.",
+                "email_text": "All set — the laptop is responsive again.",
+                "send_email": False,
+                "member_identifier": "JMiranda",
+            }, headers=AUTH).json()
+
+        self.assertTrue(body["success"], body)
+        self.assertTrue(body["status_set"], body)
+        self.assertEqual(body["status_name"], "Completed*")
+        self.assertEqual(body["warnings"], [])
+        self.assertIn("ticket resolved", body["message"])
+        set_status.assert_awaited_once_with(94945, 903)
+
+    def test_a_board_without_a_done_status_still_says_so_loudly(self):
+        client = TestClient(main.app)
+        bare = [s for s in BOARD_49_STATUSES if s["name"] in ("New*", "In Progress")]
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=BOARD_49_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=bare)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 94945, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "JMiranda",
+            }, headers=AUTH).json()
+
+        self.assertFalse(body["status_set"])
+        self.assertIn("status NOT changed", body["message"])
+        self.assertTrue(any("status left unchanged" in w for w in body["warnings"]))
+        set_status.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()
