@@ -38,11 +38,14 @@ if not POD_SECRET:
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 # Comma-separated, tried in order: the old Support Tier1 board (#34) resolves to
-# "Resolved", the new Support Tier 1 board (#49) to "Completed".
+# "Resolved", the new Support Tier 1 board (#49) to "Completed", and boards with
+# neither (Monitoring, #48) to a plain "Closed" — exact name only, see
+# EXACT_ONLY_RESOLVE_KEYS, so "Closed" can never fuzzy-match "Closed - Merged".
 RESOLVE_STATUS_NAMES = [
-    n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed").split(",") if n.strip()
+    n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed,Closed").split(",") if n.strip()
 ]
 RESOLVE_STATUS_NAME = " / ".join(RESOLVE_STATUS_NAMES)
+EXACT_ONLY_RESOLVE_KEYS = {"closed"}
 # Where a ticket goes when its current status refuses time entries. Support Tier 1
 # (board 49) blocks time on every status except In Progress, which sends no
 # customer email there.
@@ -1619,7 +1622,12 @@ async def _resolve_status(board_id: int) -> dict | None:
         hit = cw_client.exact_status(statuses, name)
         if hit:
             return hit
+    # Fuzzy pass — but NEVER for "Closed": a near-miss there could be "Closed -
+    # Merged" or "Closed (No Response)", which mean something else entirely. The
+    # Monitoring board (#48) has only an exact "Closed", found by pass 1 above.
     for name in RESOLVE_STATUS_NAMES:
+        if cw_client._status_key(name) in EXACT_ONLY_RESOLVE_KEYS:
+            continue
         target = cw_client.match_status(statuses, name)
         if target:
             return target

@@ -270,6 +270,51 @@ class FinalizeResolveStatusTests(unittest.TestCase):
         self.assertIn("ticket resolved", body["message"])
         set_status.assert_awaited_once_with(94945, 903)
 
+    # Monitoring (board 48) has neither Resolved nor Completed — its done status is a
+    # plain "Closed". Three resolves there on 10-07/10-08 ended "status NOT changed"
+    # and the techs closed the tickets by hand within a minute.
+    MONITORING_TICKET = {**TICKET, "id": 95347, "board": "Monitoring", "board_id": 48, "status": "In Progress"}
+    MONITORING_STATUSES = [
+        {"id": 801, "name": n, "inactive": False, "closed": n.startswith("Closed") or n == "Cancelled", "no_time_entry": False}
+        for n in ["New", "Re Opened", "Assigned", "Scheduled", "In Progress", "Waiting on Client",
+                  "Waiting on Vendor/Parts", "Closed", "Closed - Merged", "Cancelled"]
+    ]
+    for i, s in enumerate(MONITORING_STATUSES):
+        s["id"] = 801 + i   # "Closed" → 808
+
+    def test_resolve_on_the_monitoring_board_falls_back_to_a_plain_closed(self):
+        client = TestClient(main.app)
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=self.MONITORING_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=self.MONITORING_STATUSES)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 95347, "internal_note": "Alert cleared.", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+
+        self.assertTrue(body["status_set"], body)
+        self.assertEqual(body["status_name"], "Closed")
+        self.assertIn("ticket resolved", body["message"])
+        set_status.assert_awaited_once_with(95347, 808)
+
+    def test_closed_is_never_fuzzy_matched_to_closed_merged(self):
+        client = TestClient(main.app)
+        only_merged = [s for s in self.MONITORING_STATUSES if s["name"] != "Closed"]
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=self.MONITORING_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=only_merged)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 95347, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+
+        self.assertFalse(body["status_set"])
+        set_status.assert_not_awaited()
+
     def test_a_board_without_a_done_status_still_says_so_loudly(self):
         client = TestClient(main.app)
         bare = [s for s in BOARD_49_STATUSES if s["name"] in ("New*", "In Progress")]
