@@ -634,6 +634,28 @@ def exact_status(statuses: list[dict], wanted: str) -> dict | None:
     return min(hits, key=lambda s: len(s.get("name") or ""))
 
 
+# Closed-type statuses that are NOT "the work is done": merges, cancellations,
+# automation holding states, reopen markers and the retired scaffolding.
+_NOT_A_DONE_STATUS_RE = re.compile(
+    r"merge|cancel|automat|dnu|do not use|no response|pending|duplicate|spam|re[- ]?open"
+)
+
+
+def fallback_done_status(statuses: list[dict]) -> dict | None:
+    """Last resort for Resolve on a board that has none of the configured names:
+    the board's own closed-type status, picking the plainest one (shortest name)
+    and never a merge / cancel / automation / reopen state. None when the board
+    has no such status — the caller then reports "status NOT changed" loudly."""
+    cands = [
+        s for s in statuses
+        if not s.get("inactive") and s.get("closed")
+        and not _NOT_A_DONE_STATUS_RE.search((s.get("name") or "").lower())
+    ]
+    if not cands:
+        return None
+    return min(cands, key=lambda s: len(s.get("name") or ""))
+
+
 def match_status(statuses: list[dict], wanted: str) -> dict | None:
     """Best status on a board for a spoken name ("in progress", "waiting on client").
 

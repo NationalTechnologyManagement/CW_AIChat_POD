@@ -46,6 +46,59 @@ RESOLVE_STATUS_NAMES = [
 ]
 RESOLVE_STATUS_NAME = " / ".join(RESOLVE_STATUS_NAMES)
 EXACT_ONLY_RESOLVE_KEYS = {"closed"}
+
+
+def _parse_board_map(raw: str) -> dict[int, str]:
+    """'48=Closed,49=Completed' → {48: 'Closed', 49: 'Completed'}; junk ignored."""
+    out: dict[int, str] = {}
+    for part in (raw or "").split(","):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        try:
+            if v.strip():
+                out[int(k.strip())] = v.strip()
+        except ValueError:
+            continue
+    return out
+
+
+# Explicit per-board resolve status, consulted before the generic list — the knob
+# to turn when a board renames its done status again (no deploy needed).
+RESOLVE_STATUS_BY_BOARD = _parse_board_map(os.getenv("RESOLVE_STATUS_BY_BOARD", ""))
+# Boards whose resolve target is verified at startup (logged, never fatal) so a
+# renamed or removed done status is visible in the deploy log, not at the next
+# resolve. Support Tier 1 (#49) and Monitoring (#48) by default.
+RESOLVE_PROBE_BOARDS = [
+    int(b) for b in os.getenv("RESOLVE_PROBE_BOARDS", "49,48").split(",") if b.strip().isdigit()
+]
+# Member identifiers that are automation / API accounts, never a technician. Time
+# and resolutions must never be credited to them (ticket 95355 was resolved "as
+# Automation" because the pod fell back to the ticket owner).
+NON_PERSON_MEMBERS = {
+    m.strip().lower() for m in os.getenv("NON_PERSON_MEMBERS", "automation,api,apimember,system,hercules").split(",") if m.strip()
+}
+
+
+def _is_person_member(identifier: str | None) -> bool:
+    """True unless the identifier is a known automation/API account."""
+    if not identifier:
+        return True   # "no member" is handled separately where it matters
+    return str(identifier).strip().lower() not in NON_PERSON_MEMBERS
+
+
+def _friendly_cw_error(e: Exception, ticket: dict | None = None) -> str:
+    """_cw_error with the two ConnectWise messages technicians hit most often
+    translated into something actionable."""
+    raw = _cw_error(e)
+    low = raw.lower()
+    if "update the status of this ticket before" in low or "time entr" in low and "status" in low:
+        status = (ticket or {}).get("status") or "its current status"
+        return (f"the ticket's status '{status}' does not accept time entries — move it to "
+                f"'{TIME_ENTRY_STATUS_NAME}' (reopen it) or resolve without logging time")
+    if "not found for service board" in low:
+        return raw + " — the ticket's Type/Subtype belongs to a different board; set it in ConnectWise"
+    return raw
 # Where a ticket goes when its current status refuses time entries. Support Tier 1
 # (board 49) blocks time on every status except In Progress, which sends no
 # customer email there.
@@ -72,6 +125,8 @@ async def lifespan(app: FastAPI):
     await call_bus.start()
     _start_call_purge()
     await openrouter_client.refresh_models()
+    # Verify each known board still has a resolve target (logged, never blocking).
+    asyncio.create_task(_probe_resolve_targets())
     # Dashboard-editable settings (prompt sections, default model) — see admin_settings.py.
     models = await openrouter_client.get_models()
     await admin_settings.init({
@@ -1202,9 +1257,15 @@ async def add_time(request: AddTimeRequest):
     retry can't double-post the email. A status that refuses time entries is
     moved to In Progress first (see _ensure_time_allowed).
     """
+    if not _is_person_member(request.member_identifier):
+        return JSONResponse(status_code=400, content={
+            "success": False,
+            "error": f"Select a technician first — '{request.member_identifier}' is an automation account and the time would be credited to it."})
     moved_to = None
+    ticket = None
     try:
-        moved_to = await _ensure_time_allowed(await cw_client.get_ticket(request.ticket_id))
+        ticket = await cw_client.get_ticket(request.ticket_id)
+        moved_to = await _ensure_time_allowed(ticket)
     except Exception as e:
         # Best effort: the time entry below still runs and reports CW's own error.
         print(f"[add-time] ticket {request.ticket_id} status pre-check failed: {e!r}")
@@ -1223,7 +1284,7 @@ async def add_time(request: AddTimeRequest):
         print(f"[add-time] ticket {request.ticket_id} failed: {e!r}")
         return JSONResponse(
             status_code=500,
-            content={"success": False, "error": f"Failed to log time: {_cw_error(e)}"},
+            content={"success": False, "error": f"Failed to log time: {_friendly_cw_error(e, ticket)}"},
         )
 
     # The email is best effort — the time is already logged, so a mail failure is
@@ -1671,22 +1732,54 @@ async def _resolve_status(board_id: int) -> dict | None:
     if not board_id:
         return None
     statuses = await cw_client.get_board_statuses(board_id)
+
+    # 0. Explicit per-board override (RESOLVE_STATUS_BY_BOARD), exact name only.
+    override = RESOLVE_STATUS_BY_BOARD.get(int(board_id))
+    if override:
+        hit = cw_client.exact_status(statuses, override)
+        if hit:
+            return {**hit, "rule": f"board override '{override}'"}
+        print(f"[finalize] board {board_id}: RESOLVE_STATUS_BY_BOARD names '{override}' but the board has no such active status")
+
+    # 1. Exact match over every active status, picker filters ignored.
     for name in RESOLVE_STATUS_NAMES:
         hit = cw_client.exact_status(statuses, name)
         if hit:
-            return hit
-    # Fuzzy pass — but NEVER for "Closed": a near-miss there could be "Closed -
-    # Merged" or "Closed (No Response)", which mean something else entirely. The
-    # Monitoring board (#48) has only an exact "Closed", found by pass 1 above.
+            return {**hit, "rule": f"exact '{name}'"}
+
+    # 2. Fuzzy pass — but NEVER for "Closed": a near-miss there could be "Closed -
+    #    Merged" or "Closed (No Response)", which mean something else entirely.
     for name in RESOLVE_STATUS_NAMES:
         if cw_client._status_key(name) in EXACT_ONLY_RESOLVE_KEYS:
             continue
         target = cw_client.match_status(statuses, name)
         if target:
-            return target
+            return {**target, "rule": f"closest to '{name}'"}
+
+    # 3. Last resort: the board's own plain closed-type status (never a merge /
+    #    cancel / automation / reopen state). Covers a board nobody configured yet.
+    fallback = cw_client.fallback_done_status(statuses)
+    if fallback:
+        print(f"[finalize] board {board_id}: using closed-type status '{fallback.get('name')}' as the resolve target — add it to RESOLVE_STATUS_BY_BOARD to make this explicit")
+        return {**fallback, "rule": "board's closed-type status"}
+
     names = [s.get("name") for s in statuses if not s.get("inactive")]
     print(f"[finalize] board {board_id}: no '{RESOLVE_STATUS_NAME}' status among {names}")
     return None
+
+
+async def _probe_resolve_targets() -> None:
+    """Startup self-check: log every probed board's resolve target, so a renamed or
+    removed done status is caught in the deploy log rather than by a technician."""
+    for board_id in RESOLVE_PROBE_BOARDS:
+        try:
+            target = await _resolve_status(board_id)
+            if target:
+                print(f"[resolve-probe] board {board_id}: Resolve → '{target.get('name')}' ({target.get('rule')})")
+            else:
+                print(f"[resolve-probe] WARNING board {board_id}: NO resolve target — Resolve will end 'status NOT changed' on this board; set RESOLVE_STATUS_BY_BOARD")
+        except Exception as e:
+            print(f"[resolve-probe] board {board_id}: check failed: {e!r}")
 
 
 async def _resolve_status_id(board_id: int) -> int | None:
@@ -1726,6 +1819,13 @@ async def finalize_resolve(request: FinalizeResolveRequest):
         return JSONResponse(status_code=400, content={
             **result, "success": False,
             "error": "Select a technician before logging time."})
+    # Never credit time or a resolution to an automation account (auto-elevate
+    # tickets are owned by "Automation"; 95355 was resolved "as Automation").
+    if not _is_person_member(author):
+        return JSONResponse(status_code=400, content={
+            **result, "success": False,
+            "error": f"Select a technician first — this ticket is owned by '{author}', an automation account, "
+                     f"and the time and resolution would be credited to it."})
 
     # 1. The critical write: the internal note (technician analysis), into the time
     #    entry (and Internal Analysis) when time is logged, otherwise a standalone
@@ -1768,7 +1868,7 @@ async def finalize_resolve(request: FinalizeResolveRequest):
         return JSONResponse(status_code=500, content={
             **result,
             "success": False,
-            "error": f"Could not save the {step}: {_cw_error(e)}. Nothing was changed — adjust and try again.",
+            "error": f"Could not save the {step}: {_friendly_cw_error(e, ticket)}. Nothing was changed — adjust and try again.",
         })
 
     # 2. The Resolution — the customer-facing summary of how the issue was fixed.

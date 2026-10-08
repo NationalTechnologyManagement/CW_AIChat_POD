@@ -159,6 +159,21 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
             "Waiting to Drop Off*", "Ready for Pickup*",
         ])
 
+    def test_fallback_done_status_picks_the_plain_closed_state_only(self):
+        board = [
+            {"id": 1, "name": "In Progress", "inactive": False, "closed": False},
+            {"id": 2, "name": "Closed - Merged", "inactive": False, "closed": True},
+            {"id": 3, "name": "Cancelled", "inactive": False, "closed": True},
+            {"id": 4, "name": "Closed (Automation)*", "inactive": False, "closed": True},
+            {"id": 5, "name": "Re-Opened", "inactive": False, "closed": True},
+        ]
+        self.assertIsNone(cw_client.fallback_done_status(board), "no plain done status → nothing")
+        board.append({"id": 6, "name": "Done", "inactive": False, "closed": True})
+        self.assertEqual(cw_client.fallback_done_status(board)["name"], "Done")
+        board.append({"id": 7, "name": "Work Completed", "inactive": False, "closed": True})
+        self.assertEqual(cw_client.fallback_done_status(board)["name"], "Done", "shortest plain name wins")
+        self.assertIsNone(cw_client.fallback_done_status([{"id": 8, "name": "Done", "inactive": True, "closed": True}]))
+
     def test_resolve_target_on_board_49_is_completed_star(self):
         # 2026-09-28 → 10-02: hiding every "*" name also hid "Completed*", so the
         # resolve found "No 'Resolved / Completed' status on this board" every time.

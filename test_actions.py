@@ -370,6 +370,108 @@ class FinalizeResolveStatusTests(unittest.TestCase):
         self.assertFalse(body["category_set"])
         set_category.assert_not_awaited()
 
+    # A board nobody configured, with none of Resolved / Completed / Closed but a
+    # plain closed-type status of its own: Resolve falls back to it, never to a
+    # merge / cancel / automation state, and names it in the response.
+    def test_an_unconfigured_board_resolves_to_its_own_plain_closed_type_status(self):
+        client = TestClient(main.app)
+        statuses = [
+            {"id": 701, "name": "New", "inactive": False, "closed": False, "no_time_entry": False},
+            {"id": 702, "name": "In Progress", "inactive": False, "closed": False, "no_time_entry": False},
+            {"id": 703, "name": "Done", "inactive": False, "closed": True, "no_time_entry": True},
+            {"id": 704, "name": "Closed - Merged", "inactive": False, "closed": True, "no_time_entry": True},
+            {"id": 705, "name": "Cancelled", "inactive": False, "closed": True, "no_time_entry": True},
+        ]
+        ticket = {**TICKET, "id": 777, "board": "Projects", "board_id": 77, "status": "In Progress"}
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=statuses)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 777, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+        self.assertTrue(body["status_set"], body)
+        self.assertEqual(body["status_name"], "Done")
+        set_status.assert_awaited_once_with(777, 703)
+
+    def test_a_per_board_override_wins_over_the_generic_list(self):
+        client = TestClient(main.app)
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.dict(main.RESOLVE_STATUS_BY_BOARD, {49: "In Progress"}, clear=False), \
+             mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=BOARD_49_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 94945, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+        self.assertEqual(body["status_name"], "In Progress")
+        set_status.assert_awaited_once_with(94945, 626)
+
+    # Attribution: auto-elevate tickets are owned by "Automation". With no tech
+    # selected the pod used to fall back to the owner and credit the time and the
+    # resolution to the automation account (95355). Now it refuses and says why.
+    def test_resolving_as_the_automation_owner_is_refused_until_a_tech_is_picked(self):
+        client = TestClient(main.app)
+        ticket = {**BOARD_49_TICKET, "owner_identifier": "Automation"}
+        note = mock.AsyncMock(return_value={"id": 1})
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_ticket_note", note), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            r = client.post("/finalize-resolve", json={
+                "ticket_id": 94945, "internal_note": "n", "email_text": "", "send_email": False,
+            }, headers=AUTH)
+            body = r.json()
+            self.assertEqual(r.status_code, 400)
+            self.assertFalse(body["success"])
+            self.assertIn("Automation", body["error"])
+            note.assert_not_awaited(); set_status.assert_not_awaited()
+
+            ok = client.post("/finalize-resolve", json={
+                "ticket_id": 94945, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+            self.assertTrue(ok["success"], ok)
+            self.assertTrue(ok["status_set"])
+
+    def test_add_time_as_an_automation_account_is_refused(self):
+        client = TestClient(main.app)
+        entry = mock.AsyncMock(return_value={"id": 1, "actualHours": 0.5})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=BOARD_49_TICKET)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_time_entry", entry):
+            r = client.post("/add-time", json={
+                "ticket_id": 94945, "notes": "worked", "member_identifier": "Automation",
+                "time_start": "2026-10-08T13:00:00Z", "time_end": "2026-10-08T13:30:00Z",
+            }, headers=AUTH)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("automation account", r.json()["error"])
+        entry.assert_not_awaited()
+
+    # A status that refuses time entries and is CLOSED is left alone (the pod must
+    # not silently reopen a ticket) — but the technician gets a plain-English reason.
+    def test_time_on_a_closed_status_explains_itself(self):
+        client = TestClient(main.app)
+        ticket = {**BOARD_49_TICKET, "status": "Completed*"}
+        rejected = cw_client.CWAPIError(400, '{"code":"InvalidObject","message":"timeEntry object is invalid","errors":[{"code":"TimeEntryApi","message":"Please update the status of this ticket before entering time."}]}')
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_time_entry", mock.AsyncMock(side_effect=rejected)), \
+             mock.patch.object(cw_client, "set_ticket_status", mock.AsyncMock(return_value={})):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 94945, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+                "time_start": "2026-10-08T13:00:00Z", "time_end": "2026-10-08T13:30:00Z",
+            }, headers=AUTH).json()
+        self.assertFalse(body["success"])
+        self.assertIn("does not accept time entries", body["error"])
+        self.assertIn("Completed*", body["error"])
+
     def test_a_board_without_a_done_status_still_says_so_loudly(self):
         client = TestClient(main.app)
         bare = [s for s in BOARD_49_STATUSES if s["name"] in ("New*", "In Progress")]
