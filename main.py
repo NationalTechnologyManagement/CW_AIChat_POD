@@ -855,15 +855,17 @@ def _build_option_tree(combos: list[dict]) -> dict:
     }
 
 
-async def _board_options(board_id: int | None) -> dict:
-    """Board categorization options, cached in Postgres (TTL refresh). Never fatal."""
+async def _board_options(board_id: int | None, force: bool = False) -> dict:
+    """Board categorization options, cached in Postgres (TTL refresh). Never fatal.
+    `force` skips the cache — used when a value is about to be rejected, in case
+    the catalogue changed inside the TTL."""
     if not board_id:
         return EMPTY_OPTIONS
 
     cached = None
     try:
         cached = await db.get_board_options(board_id)
-        if cached and cached[1] < BOARD_OPTIONS_TTL:
+        if cached and cached[1] < BOARD_OPTIONS_TTL and not force:
             return cached[0]
     except Exception as e:
         print(f"[board-options] cache read failed for board {board_id}: {e}")
@@ -1605,6 +1607,57 @@ async def _ensure_time_allowed(ticket: dict) -> str | None:
     return target["name"]
 
 
+async def _valid_category(ticket: dict, type_id, subtype_id, item_id) -> dict:
+    """Which of the requested Type / Subtype / Item may actually be written.
+
+    Checks each value against the catalogue of the ticket's CURRENT board (not the
+    board the pod page was loaded on), refreshing the cached catalogue once before
+    rejecting anything, and skips values the ticket already carries. Returns
+    {"type_id", "subtype_id", "item_id"} for the write (None = nothing to write)
+    plus "dropped": human-readable names of the values that were not valid.
+    With no catalogue available the values pass through unchanged (old behaviour).
+    """
+    board_id = ticket.get("board_id")
+    tree = await _board_options(board_id) if board_id else EMPTY_OPTIONS
+
+    def check(tree: dict) -> tuple[bool, bool, bool]:
+        types = {t["id"] for t in tree.get("types", [])}
+        t_ok = bool(type_id) and type_id in types
+        eff_type = type_id if t_ok else ticket.get("type_id")          # the type the ticket will end up with
+        subs = {s["id"] for s in tree.get("subtypes", {}).get(str(eff_type), [])} if eff_type else set()
+        s_ok = bool(subtype_id) and subtype_id in subs
+        eff_sub = subtype_id if s_ok else ticket.get("subtype_id")
+        items = {i["id"] for i in tree.get("items", {}).get(f"{eff_type}-{eff_sub}", [])} if eff_type and eff_sub else set()
+        i_ok = bool(item_id) and item_id in items
+        return t_ok, s_ok, i_ok
+
+    if not tree.get("types"):
+        return {"type_id": type_id, "subtype_id": subtype_id, "item_id": item_id, "dropped": []}
+
+    t_ok, s_ok, i_ok = check(tree)
+    if (type_id and not t_ok) or (subtype_id and not s_ok) or (item_id and not i_ok):
+        fresh = await _board_options(board_id, force=True)   # the catalogue may have changed inside the TTL
+        if fresh.get("types"):
+            tree, (t_ok, s_ok, i_ok) = fresh, check(fresh)
+
+    dropped: list[str] = []
+
+    def keep(label: str, value, ok: bool, current):
+        if not value:
+            return None
+        if not ok:
+            dropped.append(f"{label} {value}")
+            return None
+        return value if value != current else None       # already on the ticket — nothing to write
+
+    return {
+        "type_id":    keep("Type", type_id, t_ok, ticket.get("type_id")),
+        "subtype_id": keep("Subtype", subtype_id, s_ok, ticket.get("subtype_id")),
+        "item_id":    keep("Item", item_id, i_ok, ticket.get("item_id")),
+        "dropped":    dropped,
+    }
+
+
 async def _resolve_status(board_id: int) -> dict | None:
     """The board's resolved status — the first of RESOLVE_STATUS_NAMES the board has.
 
@@ -1748,17 +1801,30 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             print(f"[finalize] ticket {request.ticket_id} resolution/email failed: {e!r}")
             result["warnings"].append(f"Resolution not saved: {_cw_error(e)}")
 
-    # 3. Type/Subtype/Item — ConnectWise requires a valid categorization before
-    #    a ticket can be resolved. Set it (if provided) ahead of the status change.
+    # 3. Type/Subtype/Item — validated against the ticket's CURRENT board first.
+    #    Auto-elevate tickets are typed on their origin board and then moved to
+    #    Support Tier 1 (#49); the pod page still carries the origin board's lists,
+    #    so the resolve used to send a Subtype that "is not found for Service Board
+    #    49" (95337, 95355) and the whole banner went red. Now only values that are
+    #    valid on the current board AND differ from what the ticket already has are
+    #    written; anything else is dropped with a note, and the resolve proceeds.
     if request.type_id or request.subtype_id or request.item_id:
         try:
-            await cw_client.update_ticket_category(
-                request.ticket_id,
-                type_id=request.type_id,
-                subtype_id=request.subtype_id,
-                item_id=request.item_id,
-            )
-            result["category_set"] = True
+            cat = await _valid_category(ticket, request.type_id, request.subtype_id, request.item_id)
+            if cat["dropped"]:
+                print(f"[finalize] ticket {request.ticket_id}: category {cat['dropped']} not on board {ticket.get('board_id')} ({ticket.get('board')}) — left unchanged")
+                result["warnings"].append(
+                    f"{', '.join(cat['dropped'])} not valid on board '{ticket.get('board') or ticket.get('board_id')}' "
+                    f"(the ticket may have moved boards) — left unchanged; set it in ConnectWise if needed"
+                )
+            if cat["type_id"] or cat["subtype_id"] or cat["item_id"]:
+                await cw_client.update_ticket_category(
+                    request.ticket_id,
+                    type_id=cat["type_id"],
+                    subtype_id=cat["subtype_id"],
+                    item_id=cat["item_id"],
+                )
+                result["category_set"] = True
         except Exception as e:
             print(f"[finalize] ticket {request.ticket_id} category change failed: {e!r}")
             result["warnings"].append(f"Type/Subtype not set: {_cw_error(e)}")

@@ -315,6 +315,61 @@ class FinalizeResolveStatusTests(unittest.TestCase):
         self.assertFalse(body["status_set"])
         set_status.assert_not_awaited()
 
+    # Auto-elevate tickets are typed on their origin board, then moved to Support
+    # Tier 1. The pod page still offers the origin board's subtypes, so the resolve
+    # used to send e.g. subtype 457 and ConnectWise answered "Service SubType 457 not
+    # found for Service Board 49" (95337, 95355) — the status still moved, but the
+    # banner went red. Now the category is validated against the CURRENT board.
+    BOARD_49_OPTIONS = {
+        "types": [{"id": 295, "name": "Change Management"}, {"id": 296, "name": "Remediation"}],
+        "subtypes": {"295": [{"id": 496, "name": "User"}], "296": [{"id": 484, "name": "Credential Issue"}]},
+        "items": {},
+    }
+
+    def _finalize_with_category(self, ticket, type_id, subtype_id, item_id=None):
+        client = TestClient(main.app)
+        set_status = mock.AsyncMock(return_value={})
+        set_category = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=BOARD_49_STATUSES)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "update_ticket_category", set_category), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status), \
+             mock.patch.object(main, "_board_options", mock.AsyncMock(return_value=self.BOARD_49_OPTIONS)):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": ticket["id"], "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn", "type_id": type_id, "subtype_id": subtype_id, "item_id": item_id,
+            }, headers=AUTH).json()
+        return body, set_category, set_status
+
+    def test_a_subtype_from_the_old_board_is_dropped_with_a_note_and_the_resolve_still_completes(self):
+        ticket = {**BOARD_49_TICKET, "type_id": None, "subtype_id": None, "item_id": None}
+        body, set_category, set_status = self._finalize_with_category(ticket, type_id=295, subtype_id=457)
+
+        self.assertTrue(body["success"], body)
+        self.assertTrue(body["status_set"], body)
+        self.assertEqual(body["status_name"], "Completed*")
+        self.assertIn("ticket resolved", body["message"])
+        self.assertEqual(len(body["warnings"]), 1)
+        self.assertIn("Subtype 457", body["warnings"][0])
+        self.assertIn("Support Tier 1", body["warnings"][0])
+        set_category.assert_awaited_once_with(94945, type_id=295, subtype_id=None, item_id=None)
+        set_status.assert_awaited_once_with(94945, 903)
+
+    def test_a_valid_category_is_written_as_given(self):
+        ticket = {**BOARD_49_TICKET, "type_id": None, "subtype_id": None, "item_id": None}
+        body, set_category, _ = self._finalize_with_category(ticket, type_id=295, subtype_id=496)
+        self.assertEqual(body["warnings"], [])
+        self.assertTrue(body["category_set"])
+        set_category.assert_awaited_once_with(94945, type_id=295, subtype_id=496, item_id=None)
+
+    def test_a_category_the_ticket_already_has_is_not_rewritten(self):
+        ticket = {**BOARD_49_TICKET, "type_id": 295, "subtype_id": 496, "item_id": None}
+        body, set_category, _ = self._finalize_with_category(ticket, type_id=295, subtype_id=496)
+        self.assertEqual(body["warnings"], [])
+        self.assertFalse(body["category_set"])
+        set_category.assert_not_awaited()
+
     def test_a_board_without_a_done_status_still_says_so_loudly(self):
         client = TestClient(main.app)
         bare = [s for s in BOARD_49_STATUSES if s["name"] in ("New*", "In Progress")]

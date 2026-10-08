@@ -1993,7 +1993,11 @@
             }).then(function(r){ return r.json(); }).then(function(data){
                 if (data && data.success) {
                     let msg = data.message || ('Ticket #' + TICKET.id + ' resolved');
-                    if (data.warnings && data.warnings.length) showBanner(msg + ' — note: ' + data.warnings.join(' • '), 'error');
+                    // A note on a resolve that DID move the ticket (e.g. a Subtype that is not
+                    // valid on this board) is information, not a failure — red stays reserved
+                    // for "status NOT changed".
+                    const noteTone = data.status_set ? 'info' : 'error';
+                    if (data.warnings && data.warnings.length) showBanner(msg + ' — note: ' + data.warnings.join(' • '), noteTone);
                     else showBanner(msg, 'success');
                     saveBtn.disabled = true;
                     setActContent(resolveBtn, 'check', 'Resolved');
