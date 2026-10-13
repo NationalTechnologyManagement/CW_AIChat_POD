@@ -37,10 +37,7 @@ if not POD_SECRET:
     raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
-# Comma-separated, tried in order: the old Support Tier1 board (#34) resolves to
-# "Resolved", the new Support Tier 1 board (#49) to "Completed", and boards with
-# neither (Monitoring, #48) to a plain "Closed" — exact name only, see
-# EXACT_ONLY_RESOLVE_KEYS, so "Closed" can never fuzzy-match "Closed - Merged".
+# Generic resolve statuses, tried in order when a board has no explicit override.
 RESOLVE_STATUS_NAMES = [
     n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed,Closed").split(",") if n.strip()
 ]
@@ -65,7 +62,10 @@ def _parse_board_map(raw: str) -> dict[int, str]:
 
 # Explicit per-board resolve status, consulted before the generic list — the knob
 # to turn when a board renames its done status again (no deploy needed).
-RESOLVE_STATUS_BY_BOARD = _parse_board_map(os.getenv("RESOLVE_STATUS_BY_BOARD", ""))
+RESOLVE_STATUS_BY_BOARD = {
+    49: "Ready to QC",
+    **_parse_board_map(os.getenv("RESOLVE_STATUS_BY_BOARD", "")),
+}
 # Boards whose resolve target is verified at startup (logged, never fatal) so a
 # renamed or removed done status is visible in the deploy log, not at the next
 # resolve. Support Tier 1 (#49) and Monitoring (#48) by default.

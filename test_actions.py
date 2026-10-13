@@ -238,6 +238,7 @@ BOARD_49_TICKET = {
 BOARD_49_STATUSES = [
     {"id": 901, "name": "New*", "inactive": False, "closed": False, "no_time_entry": False},
     {"id": 626, "name": "In Progress", "inactive": False, "closed": False, "no_time_entry": False},
+    {"id": 920, "name": "Ready to QC", "inactive": False, "closed": True, "no_time_entry": False},
     {"id": 903, "name": "Completed*", "inactive": False, "closed": True, "no_time_entry": False},
     {"id": 907, "name": "Client Contact 1*", "inactive": False, "closed": False, "no_time_entry": False},
     {"id": 913, "name": "DNU-AutoClosed", "inactive": False, "closed": True, "no_time_entry": True},
@@ -248,7 +249,7 @@ BOARD_49_STATUSES = [
 class FinalizeResolveStatusTests(unittest.TestCase):
     """Regression for tickets 94076 / 94945: Resolve must actually move the ticket."""
 
-    def test_resolve_on_support_tier_1_moves_the_ticket_to_completed_star(self):
+    def test_resolve_on_support_tier_1_moves_the_ticket_to_ready_to_qc(self):
         client = TestClient(main.app)
         set_status = mock.AsyncMock(return_value={})
         with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=BOARD_49_TICKET)), \
@@ -265,10 +266,30 @@ class FinalizeResolveStatusTests(unittest.TestCase):
 
         self.assertTrue(body["success"], body)
         self.assertTrue(body["status_set"], body)
-        self.assertEqual(body["status_name"], "Completed*")
+        self.assertEqual(body["status_name"], "Ready to QC")
         self.assertEqual(body["warnings"], [])
         self.assertIn("ticket resolved", body["message"])
-        set_status.assert_awaited_once_with(94945, 903)
+        set_status.assert_awaited_once_with(94945, 920)
+
+    def test_ready_to_qc_is_not_preferred_on_other_boards(self):
+        client = TestClient(main.app)
+        ticket = {**TICKET, "board_id": 34}
+        statuses = [
+            {"id": 920, "name": "Ready to QC", "inactive": False, "closed": True},
+            {"id": 903, "name": "Resolved", "inactive": False, "closed": True},
+        ]
+        set_status = mock.AsyncMock(return_value={})
+        with mock.patch.object(cw_client, "get_ticket", mock.AsyncMock(return_value=ticket)), \
+             mock.patch.object(cw_client, "get_board_statuses", mock.AsyncMock(return_value=statuses)), \
+             mock.patch.object(cw_client, "create_ticket_note", mock.AsyncMock(return_value={"id": 1})), \
+             mock.patch.object(cw_client, "set_ticket_status", set_status):
+            body = client.post("/finalize-resolve", json={
+                "ticket_id": 500, "internal_note": "n", "email_text": "", "send_email": False,
+                "member_identifier": "athorn",
+            }, headers=AUTH).json()
+
+        self.assertEqual(body["status_name"], "Resolved")
+        set_status.assert_awaited_once_with(500, 903)
 
     # Monitoring (board 48) has neither Resolved nor Completed — its done status is a
     # plain "Closed". Three resolves there on 10-07/10-08 ended "status NOT changed"
@@ -348,13 +369,13 @@ class FinalizeResolveStatusTests(unittest.TestCase):
 
         self.assertTrue(body["success"], body)
         self.assertTrue(body["status_set"], body)
-        self.assertEqual(body["status_name"], "Completed*")
+        self.assertEqual(body["status_name"], "Ready to QC")
         self.assertIn("ticket resolved", body["message"])
         self.assertEqual(len(body["warnings"]), 1)
         self.assertIn("Subtype 457", body["warnings"][0])
         self.assertIn("Support Tier 1", body["warnings"][0])
         set_category.assert_awaited_once_with(94945, type_id=295, subtype_id=None, item_id=None)
-        set_status.assert_awaited_once_with(94945, 903)
+        set_status.assert_awaited_once_with(94945, 920)
 
     def test_a_valid_category_is_written_as_given(self):
         ticket = {**BOARD_49_TICKET, "type_id": None, "subtype_id": None, "item_id": None}
