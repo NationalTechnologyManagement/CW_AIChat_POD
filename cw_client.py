@@ -587,12 +587,14 @@ def _status_key(name: str) -> str:
     return "".join(c for c in (name or "").lower() if c.isalnum())
 
 
-# Board 49 (Support Tier 1) suffixes MANY status names with "*" — including the
-# ones technicians use every day: "New*", "Completed*", "Waiting on Client*",
-# "Waiting to Drop Off*", "Ready for Pickup*". Only some "*" statuses are driven by
-# automation and belong out of the picker. Hiding every "*" name (2026-09-28)
-# also hid "Completed*", so every Resolve from then until 2026-10-02 ended with
-# "status NOT changed" and techs completed tickets by hand.
+# Board 49 (Support Tier 1) suffixes MANY status names with "*" — it marks a status
+# that fires a customer email template, including the ones technicians use every
+# day: "New*", "Ready to QC*" (the done status, "Completed*" until 2026-10-13),
+# "Waiting on Client*", "Waiting to Drop Off*", "Ready for Pickup*", "Client
+# Responded*". Only some "*" statuses are driven by automation and belong out of
+# the picker. Hiding every "*" name (2026-09-28) also hid the done status, so every
+# Resolve from then until 2026-10-02 ended with "status NOT changed" and techs
+# completed tickets by hand.
 _AUTOMATION_STAR_RE = re.compile(r"client contact|closed pending|no response|cancel|automat")
 
 
@@ -603,8 +605,9 @@ def usable_statuses(statuses: list[dict]) -> list[dict]:
     NOT USE)", "OLD STATUSES (DO NOT USE)", *-Automation. On Support Tier 1 (board
     49) a trailing "*" alone does not mean automation — see _AUTOMATION_STAR_RE for
     the "*" statuses that actually are ("Client Contact 1*", "Closed Pending*",
-    "Closed (No Response)*", "Closed (Cancelled)*"). None of those should ever
-    reach a status picker or the assistant's list of options.
+    "Closed (No Response)*", "Closed (Cancelled)*"), nor do merge states such as
+    "Closed (Merge)". None of those should ever reach a status picker or the
+    assistant's list of options.
     """
     keep = []
     for s in statuses:
@@ -612,6 +615,10 @@ def usable_statuses(statuses: list[dict]) -> list[dict]:
         if s.get("inactive") or not name:
             continue
         if "automat" in name or "do not use" in name or name.startswith("dnu"):
+            continue
+        # Merge states ("Closed (Merge)", "Closed - Merged", "DNU-Merged") are set
+        # by ConnectWise when a ticket is merged, never picked by a technician.
+        if "merge" in name:
             continue
         if name.endswith("*") and _AUTOMATION_STAR_RE.search(name):
             continue
@@ -621,7 +628,7 @@ def usable_statuses(statuses: list[dict]) -> list[dict]:
 
 def exact_status(statuses: list[dict], wanted: str) -> dict | None:
     """The ACTIVE status whose normalized name equals `wanted`, ignoring the picker
-    filters entirely ("Completed" == "Completed*" == "completed"). This is what a
+    filters entirely ("Ready to QC" == "Ready to QC*" == "ready to qc"). This is what a
     write target such as the Resolve status must use: a status hidden from the
     picker for cosmetic reasons must never make the resolve silently skip."""
     target = _status_key(wanted)

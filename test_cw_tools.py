@@ -137,7 +137,7 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
     BOARD_49 = [
         {"id": 1, "name": "New*", "inactive": False},
         {"id": 2, "name": "In Progress", "inactive": False},
-        {"id": 3, "name": "Completed*", "inactive": False},
+        {"id": 3, "name": "Ready to QC*", "inactive": False},   # the done status since 2026-10-13
         {"id": 4, "name": "Waiting on Client*", "inactive": False},
         {"id": 5, "name": "Waiting to Drop Off*", "inactive": False},
         {"id": 6, "name": "Ready for Pickup*", "inactive": False},
@@ -150,13 +150,17 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         {"id": 13, "name": "DNU-AutoClosed", "inactive": False},
         {"id": 14, "name": "Resolved-Automation", "inactive": False},
         {"id": 15, "name": "Completed", "inactive": True},   # retired twin — never a target
+        {"id": 16, "name": "Client Responded*", "inactive": False},
+        {"id": 17, "name": "Closed", "inactive": False, "closed": True},
+        {"id": 18, "name": "Done Yet?", "inactive": True},
+        {"id": 19, "name": "Closed (Merge)", "inactive": False, "closed": True},   # set by a merge, never picked
     ]
 
     def test_board_49_star_statuses_techs_use_stay_in_the_picker(self):
         names = [s["name"] for s in cw_client.usable_statuses(self.BOARD_49)]
         self.assertEqual(names, [
-            "New*", "In Progress", "Completed*", "Waiting on Client*",
-            "Waiting to Drop Off*", "Ready for Pickup*",
+            "New*", "In Progress", "Ready to QC*", "Waiting on Client*",
+            "Waiting to Drop Off*", "Ready for Pickup*", "Client Responded*", "Closed",
         ])
 
     def test_fallback_done_status_picks_the_plain_closed_state_only(self):
@@ -174,11 +178,15 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cw_client.fallback_done_status(board)["name"], "Done", "shortest plain name wins")
         self.assertIsNone(cw_client.fallback_done_status([{"id": 8, "name": "Done", "inactive": True, "closed": True}]))
 
-    def test_resolve_target_on_board_49_is_completed_star(self):
-        # 2026-09-28 → 10-02: hiding every "*" name also hid "Completed*", so the
+    def test_resolve_target_on_board_49_is_ready_to_qc_star(self):
+        # 2026-09-28 → 10-02: hiding every "*" name also hid the done status, so the
         # resolve found "No 'Resolved / Completed' status on this board" every time.
-        self.assertEqual(cw_client.exact_status(self.BOARD_49, "Completed")["name"], "Completed*")
-        self.assertEqual(cw_client.match_status(self.BOARD_49, "Completed")["name"], "Completed*")
+        # On 2026-10-13 the board renamed "Completed*" to "Ready to QC*".
+        self.assertEqual(cw_client.exact_status(self.BOARD_49, "Ready to QC")["name"], "Ready to QC*")
+        self.assertEqual(cw_client.match_status(self.BOARD_49, "Ready to QC")["name"], "Ready to QC*")
+        # The old name is gone (its only twin is retired) — nothing may match it.
+        self.assertIsNone(cw_client.exact_status(self.BOARD_49, "Completed"))
+        self.assertIsNone(cw_client.match_status(self.BOARD_49, "Completed"))
         # "Resolved" has no exact twin here, and the fuzzy pass must never settle for
         # the DNU / automation statuses that merely contain the word.
         self.assertIsNone(cw_client.exact_status(self.BOARD_49, "Resolved"))

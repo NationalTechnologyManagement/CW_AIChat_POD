@@ -37,19 +37,22 @@ if not POD_SECRET:
     raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
-# Comma-separated, tried in order: the old Support Tier1 board (#34) resolves to
-# "Resolved", the new Support Tier 1 board (#49) to "Completed", and boards with
-# neither (Monitoring, #48) to a plain "Closed" — exact name only, see
-# EXACT_ONLY_RESOLVE_KEYS, so "Closed" can never fuzzy-match "Closed - Merged".
+# Comma-separated, tried in order: the old Support Tier1 board (#34, now named "DO
+# NOT USE") resolves to "Resolved", the new Support Tier 1 board (#49) to "Ready to
+# QC*" (renamed from "Completed*" on 2026-10-13; "Completed" stays in the list for
+# any board that still uses it), and boards with none of those (Monitoring, #48) to
+# a plain "Closed" — exact name only, see EXACT_ONLY_RESOLVE_KEYS, so "Closed" can
+# never fuzzy-match "Closed - Merged". "Ready to QC" must sit ahead of "Closed":
+# board 49 has both, and only the former is "the tech is done".
 RESOLVE_STATUS_NAMES = [
-    n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Completed,Closed").split(",") if n.strip()
+    n.strip() for n in os.getenv("RESOLVE_STATUS_NAME", "Resolved,Ready to QC,Completed,Closed").split(",") if n.strip()
 ]
 RESOLVE_STATUS_NAME = " / ".join(RESOLVE_STATUS_NAMES)
 EXACT_ONLY_RESOLVE_KEYS = {"closed"}
 
 
 def _parse_board_map(raw: str) -> dict[int, str]:
-    """'48=Closed,49=Completed' → {48: 'Closed', 49: 'Completed'}; junk ignored."""
+    """'48=Closed,49=Ready to QC' → {48: 'Closed', 49: 'Ready to QC'}; junk ignored."""
     out: dict[int, str] = {}
     for part in (raw or "").split(","):
         if "=" not in part:
@@ -64,8 +67,10 @@ def _parse_board_map(raw: str) -> dict[int, str]:
 
 
 # Explicit per-board resolve status, consulted before the generic list — the knob
-# to turn when a board renames its done status again (no deploy needed).
-RESOLVE_STATUS_BY_BOARD = _parse_board_map(os.getenv("RESOLVE_STATUS_BY_BOARD", ""))
+# to turn when a board renames its done status again (no deploy needed). Support
+# Tier 1 (#49) is pinned to "Ready to QC" by default; the env var replaces the
+# whole map, so repeat that entry when adding others.
+RESOLVE_STATUS_BY_BOARD = _parse_board_map(os.getenv("RESOLVE_STATUS_BY_BOARD", "49=Ready to QC"))
 # Boards whose resolve target is verified at startup (logged, never fatal) so a
 # renamed or removed done status is visible in the deploy log, not at the next
 # resolve. Support Tier 1 (#49) and Monitoring (#48) by default.
@@ -100,8 +105,9 @@ def _friendly_cw_error(e: Exception, ticket: dict | None = None) -> str:
         return raw + " — the ticket's Type/Subtype belongs to a different board; set it in ConnectWise"
     return raw
 # Where a ticket goes when its current status refuses time entries. Support Tier 1
-# (board 49) blocks time on every status except In Progress, which sends no
-# customer email there.
+# (board 49) blocks time on most statuses (New*, Assigned, Acknowledged, On Hold,
+# the Waiting on Quote/Approval/3rd party ones, every closed one); In Progress
+# accepts it and sends no customer email there.
 TIME_ENTRY_STATUS_NAME = os.getenv("TIME_ENTRY_STATUS_NAME", "In Progress")
 # Shared secret for the server-to-server live-chat bridge (Hercules -> /live/history).
 LIVE_BRIDGE_SECRET = os.getenv("LIVE_BRIDGE_SECRET", "")
@@ -1723,10 +1729,11 @@ async def _resolve_status(board_id: int) -> dict | None:
     """The board's resolved status — the first of RESOLVE_STATUS_NAMES the board has.
 
     Pass 1 is an EXACT normalized name match over every active status on the board,
-    picker filters ignored: board 49's done status is literally "Completed*", and
-    hiding "*" names from the picker (2026-09-28) must never hide the resolve target
-    again. Pass 2 falls back to the picker-filtered fuzzy match, which deliberately
-    can never land on a DNU-/automation status. Returns the status dict (id, name)
+    picker filters ignored: board 49's done status is literally "Ready to QC*"
+    (was "Completed*" until 2026-10-13), and hiding "*" names from the picker
+    (2026-09-28) must never hide the resolve target again. Pass 2 falls back to
+    the picker-filtered fuzzy match, which deliberately can never land on a
+    DNU-/automation status. Returns the status dict (id, name)
     or None, and logs the board's statuses when nothing matches so the next
     investigation takes minutes, not days."""
     if not board_id:
@@ -1929,7 +1936,7 @@ async def finalize_resolve(request: FinalizeResolveRequest):
             print(f"[finalize] ticket {request.ticket_id} category change failed: {e!r}")
             result["warnings"].append(f"Type/Subtype not set: {_cw_error(e)}")
 
-    # 4. Move to Resolved / Completed (notes/time are already saved). Every outcome
+    # 4. Move to Resolved / Ready to QC (notes/time are already saved). Every outcome
     #    is logged: a silent "status left unchanged" is how the 94076 and 94945
     #    incidents went unnoticed.
     try:
