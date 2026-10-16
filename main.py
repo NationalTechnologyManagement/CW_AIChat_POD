@@ -1447,6 +1447,7 @@ class SmsSendRequest(BaseModel):
     ticket_id: int
     text: str
     member_identifier: str | None = None
+    to: str | None = None   # a number the tech typed instead of the contact's cell
 
 
 _SMS_NOT_CONFIGURED = {"success": False, "error": "Texting is not set up on this pod (SMS_AGENT_URL / SMS_AGENT_SECRET)."}
@@ -1454,12 +1455,13 @@ _SMS_UNREACHABLE = {"success": False, "error": "The texting service is unreachab
 
 
 @app.get("/sms/info")
-async def sms_info(ticketId: int = Query(...)):
-    """Who a text would go to (or why it can't), plus the ticket's recent texts."""
+async def sms_info(ticketId: int = Query(...), member: str = Query("")):
+    """Who a text would go to (or why it can't), the ticket's recent texts, and
+    the first name a text from `member` is signed with."""
     if not sms_agent_client.is_configured():
         return JSONResponse(status_code=503, content=_SMS_NOT_CONFIGURED)
     try:
-        status, data = await sms_agent_client.ticket_info(ticketId)
+        status, data = await sms_agent_client.ticket_info(ticketId, member.strip() or None)
     except httpx.HTTPError as e:
         print(f"[sms] info for ticket {ticketId} failed: {e!r}")
         return JSONResponse(status_code=502, content=_SMS_UNREACHABLE)
@@ -1477,7 +1479,8 @@ async def sms_send(request: SmsSendRequest):
         return JSONResponse(status_code=400, content={
             "success": False, "error": "Pick the technician sending this text."})
     try:
-        status, data = await sms_agent_client.send_text(request.ticket_id, request.text, member)
+        status, data = await sms_agent_client.send_text(
+            request.ticket_id, request.text, member, (request.to or "").strip() or None)
     except httpx.HTTPError as e:
         print(f"[sms] send for ticket {request.ticket_id} failed: {e!r}")
         return JSONResponse(status_code=502, content=_SMS_UNREACHABLE)

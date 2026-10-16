@@ -50,15 +50,19 @@ def _body(response: httpx.Response) -> dict:
     return {"success": False, "error": f"SMS agent answered {response.status_code}"}
 
 
-async def ticket_info(ticket_id: int) -> tuple[int, dict]:
-    """(status, body): who would be texted, whether it is allowed, recent texts."""
-    response = await _client.get(f"/api/tickets/{ticket_id}/sms")
+async def ticket_info(ticket_id: int, member_identifier: str | None = None) -> tuple[int, dict]:
+    """(status, body): who would be texted, whether it is allowed, recent texts,
+    and the first name the text will be signed with for this member."""
+    params = {"member": member_identifier} if member_identifier else None
+    response = await _client.get(f"/api/tickets/{ticket_id}/sms", params=params)
     return response.status_code, _body(response)
 
 
-async def send_text(ticket_id: int, message: str, member_identifier: str | None) -> tuple[int, dict]:
-    response = await _client.post(
-        f"/api/tickets/{ticket_id}/sms",
-        json={"message": message, "memberIdentifier": member_identifier},
-    )
+async def send_text(ticket_id: int, message: str, member_identifier: str | None,
+                    to: str | None = None) -> tuple[int, dict]:
+    """`to` is a number the tech typed; the agent checks it is a cell and not opted out."""
+    payload = {"message": message, "memberIdentifier": member_identifier}
+    if to:
+        payload["to"] = to
+    response = await _client.post(f"/api/tickets/{ticket_id}/sms", json=payload)
     return response.status_code, _body(response)
