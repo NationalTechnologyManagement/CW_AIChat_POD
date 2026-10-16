@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,6 +31,7 @@ import hudu_client
 import live
 import openrouter_client
 import screenconnect_client
+import sms_agent_client
 from cw_client import CWAuthError, CWNotFoundError, CWAPIError
 
 POD_SECRET = os.getenv("POD_SECRET", "")
@@ -126,6 +128,7 @@ async def lifespan(app: FastAPI):
     cw_client.init_client()
     screenconnect_client.init_client()
     hudu_client.init_client()
+    sms_agent_client.init_client()
     await db.init_pool()
     await live.init_live()
     await call_bus.start()
@@ -148,6 +151,7 @@ async def lifespan(app: FastAPI):
     await _drain_call_summaries()
     await screenconnect_client.close_client()
     await hudu_client.close_client()
+    await sms_agent_client.close_client()
     await call_bus.stop()
     await live.close_live()
     await db.close_pool()
@@ -797,6 +801,7 @@ async def pod(
             "cw_manage_url": CW_MANAGE_URL,
             "screenconnect_enabled": screenconnect_client.is_configured(),
             "hudu_enabled": hudu_client.is_configured(),
+            "sms_enabled": sms_agent_client.is_configured(),
             "live_active": False,
             "error": None,
         }
@@ -1434,6 +1439,52 @@ async def run_action(request: ActionRequest):
     _invalidate_ticket_ctx(request.ticket_id)
     print(f"[action] {action} on ticket {request.ticket_id} as {author}")
     return {"success": True, "message": message}
+
+
+# --- Text the customer (ntm-sms-agent) ---
+
+class SmsSendRequest(BaseModel):
+    ticket_id: int
+    text: str
+    member_identifier: str | None = None
+
+
+_SMS_NOT_CONFIGURED = {"success": False, "error": "Texting is not set up on this pod (SMS_AGENT_URL / SMS_AGENT_SECRET)."}
+_SMS_UNREACHABLE = {"success": False, "error": "The texting service is unreachable right now. Try again in a minute."}
+
+
+@app.get("/sms/info")
+async def sms_info(ticketId: int = Query(...)):
+    """Who a text would go to (or why it can't), plus the ticket's recent texts."""
+    if not sms_agent_client.is_configured():
+        return JSONResponse(status_code=503, content=_SMS_NOT_CONFIGURED)
+    try:
+        status, data = await sms_agent_client.ticket_info(ticketId)
+    except httpx.HTTPError as e:
+        print(f"[sms] info for ticket {ticketId} failed: {e!r}")
+        return JSONResponse(status_code=502, content=_SMS_UNREACHABLE)
+    return JSONResponse(status_code=status, content=data)
+
+
+@app.post("/sms/send")
+async def sms_send(request: SmsSendRequest):
+    """Text the ticket's contact. The agent enforces every texting rule and adds
+    the internal note credited to the confirming tech."""
+    if not sms_agent_client.is_configured():
+        return JSONResponse(status_code=503, content=_SMS_NOT_CONFIGURED)
+    member = (request.member_identifier or "").strip() or None
+    if not member or not _is_person_member(member):
+        return JSONResponse(status_code=400, content={
+            "success": False, "error": "Pick the technician sending this text."})
+    try:
+        status, data = await sms_agent_client.send_text(request.ticket_id, request.text, member)
+    except httpx.HTTPError as e:
+        print(f"[sms] send for ticket {request.ticket_id} failed: {e!r}")
+        return JSONResponse(status_code=502, content=_SMS_UNREACHABLE)
+    if status == 200 and data.get("success"):
+        _invalidate_ticket_ctx(request.ticket_id)
+        print(f"[sms] ticket {request.ticket_id} texted by {member} ({data.get('delivery')})")
+    return JSONResponse(status_code=status, content=data)
 
 
 @app.get("/statuses")
