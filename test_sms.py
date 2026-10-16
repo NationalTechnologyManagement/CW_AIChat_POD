@@ -38,7 +38,7 @@ class SmsEndpointTests(unittest.TestCase):
             r = self.client.get("/sms/info?ticketId=500", headers=AUTH)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["phone"], "(248) 555-0101")
-        info.assert_awaited_once_with(500)
+        info.assert_awaited_once_with(500, None)
 
     def test_send_goes_out_as_the_confirming_tech(self):
         sent = {"success": True, "delivery": "sent", "to": "(248) 555-0101", "warning": None}
@@ -46,7 +46,18 @@ class SmsEndpointTests(unittest.TestCase):
             r = self.client.post("/sms/send", json={"ticket_id": 500, "text": "On my way", "member_identifier": "tVaughan"}, headers=AUTH)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["delivery"], "sent")
-        send.assert_awaited_once_with(500, "On my way", "tVaughan")
+        send.assert_awaited_once_with(500, "On my way", "tVaughan", None)
+
+    def test_member_and_typed_number_are_passed_to_the_agent(self):
+        with mock.patch.object(sms_agent_client, "ticket_info", mock.AsyncMock(return_value=(200, INFO))) as info:
+            self.client.get("/sms/info?ticketId=500&member=galdaco", headers=AUTH)
+        info.assert_awaited_once_with(500, "galdaco")
+        sent = {"success": True, "delivery": "sent", "to": "(248) 555-0177", "warning": None}
+        with mock.patch.object(sms_agent_client, "send_text", mock.AsyncMock(return_value=(200, sent))) as send:
+            r = self.client.post("/sms/send", json={"ticket_id": 500, "text": "hi", "member_identifier": "galdaco",
+                                                    "to": " (248) 555-0177 "}, headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        send.assert_awaited_once_with(500, "hi", "galdaco", "(248) 555-0177")
 
     def test_a_send_without_a_real_technician_is_refused(self):
         with mock.patch.object(sms_agent_client, "send_text", mock.AsyncMock()) as send:
@@ -103,6 +114,10 @@ class SmsAgentClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.requests[0].url.path, "/api/tickets/500/sms")
         self.assertEqual(self.requests[1].headers["X-Tech-Secret"], "tech")
         self.assertIn(b'"memberIdentifier":"tVaughan"', self.requests[1].content.replace(b" ", b""))
+        await sms_agent_client.ticket_info(500, "galdaco")
+        self.assertEqual(self.requests[2].url.params["member"], "galdaco")
+        await sms_agent_client.send_text(500, "hello", "galdaco", "2485550177")
+        self.assertIn(b'"to":"2485550177"', self.requests[3].content.replace(b" ", b""))
 
     def test_init_requires_url_and_secret(self):
         with mock.patch.dict(os.environ, {"SMS_AGENT_URL": "https://sms.test", "SMS_AGENT_SECRET": ""}):

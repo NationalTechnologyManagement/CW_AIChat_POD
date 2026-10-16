@@ -652,10 +652,15 @@
                 <div class="sheet-body">
                     <div class="sheet-hint" id="smsInfo">Checking the customer's cell number…</div>
                     <div class="sms-test" id="smsTest" style="display:none;">Test mode: this text will be logged, not sent.</div>
+                    <label class="field">
+                        <span>To (cell number)</span>
+                        <input class="inp" id="smsTo" type="tel" inputmode="tel" maxlength="20" autocomplete="off" placeholder="(248) 555-1234" disabled>
+                        <span class="sheet-hint">Change it to text a different cell. It's checked with the carrier before sending.</span>
+                    </label>
                     <div class="field">
                         <div class="field-head"><span>Message</span><span class="sms-count" id="smsCount">0 / 480</span></div>
                         <textarea class="inp" id="smsText" rows="4" maxlength="480" placeholder="e.g. I'll be onsite at 2pm to look at the printer."></textarea>
-                        <div class="sheet-hint">Sent as "NTM Ticket #{{ ticket.id }}: your message". Their replies are added to this ticket as notes.</div>
+                        <div class="sheet-hint" id="smsSignHint">Sent as "NTM Ticket #{{ ticket.id }}: your message", signed with your first name. Their replies are added to this ticket as notes.</div>
                     </div>
                     <div class="field" id="smsHistoryWrap" style="display:none;">
                         <span style="font-size:11px;font-weight:600;color:var(--muted);">Recent texts on this ticket</span>
@@ -1415,11 +1420,16 @@
         // ntm-sms-agent; the sheet only shows its verdict and relays the send.
         const smsSheet = $('smsSheet'), smsInfo = $('smsInfo'), smsTest = $('smsTest'), smsText = $('smsText');
         const smsCount = $('smsCount'), smsHistory = $('smsHistory'), smsHistoryWrap = $('smsHistoryWrap'), smsSubmit = $('smsSubmit');
-        let smsTarget = null;   // { name, phone } when the agent says a text is allowed
+        const smsTo = $('smsTo'), smsSignHint = $('smsSignHint');
+        let smsTarget = null;   // { name } when the contact may be texted (the number is in the To field)
         let smsSending = false;
+        function smsDigits(v){ const d = String(v || '').replace(/\D+/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d; }
         function smsSyncSubmit(){
             smsCount.textContent = smsText.value.length + ' / 480';
-            smsSubmit.disabled = smsSending || !smsTarget || !smsText.value.trim();
+            smsSubmit.disabled = smsSending || !smsTarget || smsDigits(smsTo.value).length !== 10 || !smsText.value.trim();
+        }
+        function smsShowSignature(name){
+            smsSignHint.textContent = 'Sent as "NTM Ticket #' + TICKET.id + ': your message' + (name ? ' - ' + name : '') + '". Their replies are added to this ticket as notes.';
         }
         function openSmsSheet(){ smsSheet.classList.add('open'); syncOverlay(); loadSmsInfo(); setTimeout(function(){ smsText.focus(); }, 350); }
         function closeSmsSheet(){ smsSheet.classList.remove('open'); syncOverlay(); }
@@ -1440,17 +1450,27 @@
             });
         }
         async function loadSmsInfo(){
-            smsTarget = null; smsSyncSubmit();
+            smsTarget = null; smsTo.disabled = true; smsTo.value = ''; smsSyncSubmit();
             smsInfo.className = 'sheet-hint'; smsInfo.textContent = "Checking the customer's cell number…";
             smsTest.style.display = 'none';
             try {
-                const r = await fetch('/sms/info?ticketId=' + TICKET.id, { headers: { 'X-Pod-Token': POD_TOKEN } });
+                const q = '/sms/info?ticketId=' + TICKET.id + (selectedMember ? '&member=' + encodeURIComponent(selectedMember) : '');
+                const r = await fetch(q, { headers: { 'X-Pod-Token': POD_TOKEN } });
                 const d = await r.json();
                 if (!r.ok || !d.success) throw new Error(d.error || 'unavailable');
                 renderSmsHistory(d.history);
-                if (d.canSend) {
-                    smsTarget = { name: d.contactName || 'the customer', phone: d.phone };
-                    smsInfo.textContent = 'To ' + smsTarget.name + ' at ' + d.phone + (d.lineType === 'mobile' ? ' (cell, verified)' : '') + '.';
+                smsShowSignature(d.signName);
+                if (d.phoneEditable) {
+                    // The contact may be texted: at their verified cell, or at a number the tech types.
+                    smsTarget = { name: d.contactName || 'the customer' };
+                    smsTo.disabled = false;
+                    smsTo.value = d.phone || '';
+                    if (d.canSend) {
+                        smsInfo.textContent = 'To ' + smsTarget.name + (d.lineType === 'mobile' ? ' (cell verified with the carrier).' : '.');
+                    } else {
+                        smsInfo.className = 'sheet-hint blocked';
+                        smsInfo.textContent = d.reason || 'No cell number on file. Type one in to text it.';
+                    }
                     smsTest.style.display = d.dryRun ? 'block' : 'none';
                 } else {
                     smsInfo.className = 'sheet-hint blocked';
@@ -1464,17 +1484,18 @@
         }
         async function sendSms(){
             const text = smsText.value.trim();
-            if (!text || !smsTarget || smsSending) return;
+            const to = smsTo.value.trim();
+            if (!text || !smsTarget || smsSending || smsDigits(to).length !== 10) return;
             const member = await confirmIdentity('text the customer', selectedMember);
             if (!member) return;
-            const ok = await showConfirm('Text ' + smsTarget.name + ' at ' + smsTarget.phone + '?');
+            const ok = await showConfirm('Text ' + smsTarget.name + ' at ' + to + ', signed ' + (memberName(member) || member).split(/\s+/)[0] + '?');
             if (!ok) return;
             smsSending = true; smsSyncSubmit(); smsSubmit.textContent = 'Sending…';
             try {
                 const r = await fetch('/sms/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
-                    body: JSON.stringify({ ticket_id: TICKET.id, text: text, member_identifier: member }),
+                    body: JSON.stringify({ ticket_id: TICKET.id, text: text, member_identifier: member, to: to }),
                 });
                 const d = await r.json();
                 if (!r.ok || !d.success) throw new Error(d.error || 'The text was not sent.');
@@ -1490,6 +1511,7 @@
             }
         }
         smsText.addEventListener('input', smsSyncSubmit);
+        smsTo.addEventListener('input', smsSyncSubmit);
         $('smsClose').addEventListener('click', closeSmsSheet);
         $('smsCancel').addEventListener('click', closeSmsSheet);
         smsSubmit.addEventListener('click', sendSms);
