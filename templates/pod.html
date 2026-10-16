@@ -395,6 +395,13 @@
         .ac-result .i{font-size:16px;}
 
         .sheet-hint{font-size:12px;color:var(--icon);line-height:1.5;}
+        .sheet-hint.blocked{color:#f0a35e;}
+        .sms-test{font-size:12px;line-height:1.45;padding:7px 10px;border-radius:8px;border:1px solid rgba(240,163,94,.4);background:rgba(240,163,94,.1);color:#f0c08e;}
+        .sms-count{font-size:11px;color:var(--muted);}
+        .sms-hist{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;}
+        .sms-hist .m{font-size:12px;line-height:1.45;padding:6px 9px;border-radius:8px;border:1px solid var(--border-4);background:var(--sunken);color:var(--text-2);white-space:pre-wrap;word-break:break-word;}
+        .sms-hist .m.in{border-color:var(--accent-border);}
+        .sms-hist .m .meta{display:block;font-size:10px;color:var(--muted);margin-bottom:2px;}
         .duration{text-align:center;font-size:13px;font-weight:600;color:var(--accent);}
         .sheet-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:2px;flex-wrap:wrap;}
         .btn{border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:9px;padding:9px 16px;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:opacity .2s;}
@@ -528,6 +535,7 @@
                             <button class="act time" id="addTimeBtn"><span class="i">schedule</span>Add Time</button>
                             <button class="act" id="saveBtn" disabled><span class="i">bookmark_add</span>Save</button>
                             <button class="act" id="kbBtn" title="Write this fix up as a Hudu KB article"{% if not hudu_enabled %} hidden{% endif %}><span class="i">menu_book</span>Create KB</button>
+                            <button class="act" id="smsBtn" title="Text the customer about this ticket"{% if not sms_enabled %} hidden{% endif %}><span class="i">sms</span>Text</button>
                             <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
                         </div>
                     </div>
@@ -631,6 +639,31 @@
                         <button class="btn" id="timeCancel">Cancel</button>
                         <button class="btn" id="timeSkip" style="display:none;">Skip Time</button>
                         <button class="btn btn-primary" id="timeSubmit">Save Time</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Text customer sheet (ntm-sms-agent) -->
+            <div class="sheet" id="smsSheet">
+                <div class="sheet-head">
+                    <div class="sheet-title">Text customer · #{{ ticket.id }}</div>
+                    <button class="sheet-close" id="smsClose"><span class="i">close</span></button>
+                </div>
+                <div class="sheet-body">
+                    <div class="sheet-hint" id="smsInfo">Checking the customer's cell number…</div>
+                    <div class="sms-test" id="smsTest" style="display:none;">Test mode: this text will be logged, not sent.</div>
+                    <div class="field">
+                        <div class="field-head"><span>Message</span><span class="sms-count" id="smsCount">0 / 480</span></div>
+                        <textarea class="inp" id="smsText" rows="4" maxlength="480" placeholder="e.g. I'll be onsite at 2pm to look at the printer."></textarea>
+                        <div class="sheet-hint">Sent as "NTM Ticket #{{ ticket.id }}: your message". Their replies are added to this ticket as notes.</div>
+                    </div>
+                    <div class="field" id="smsHistoryWrap" style="display:none;">
+                        <span style="font-size:11px;font-weight:600;color:var(--muted);">Recent texts on this ticket</span>
+                        <div class="sms-hist" id="smsHistory"></div>
+                    </div>
+                    <div class="sheet-actions">
+                        <button class="btn" id="smsCancel">Cancel</button>
+                        <button class="btn btn-primary" id="smsSubmit" disabled>Send Text</button>
                     </div>
                 </div>
             </div>
@@ -1365,7 +1398,7 @@
         $('setScBackstageBtn').addEventListener('click', function(){ launchScreenConnect('backstage'); });
 
         // ===== Sheets =====
-        function anySheetOpen(){ return timeSheet.classList.contains('open') || resolveSheet.classList.contains('open'); }
+        function anySheetOpen(){ return timeSheet.classList.contains('open') || resolveSheet.classList.contains('open') || smsSheet.classList.contains('open'); }
         function syncOverlay(){ overlay.classList.toggle('show', anySheetOpen()); }
         function openTimeSheet(){ timeSheet.classList.add('open'); syncOverlay(); }
         function closeTimeSheet(){ timeSheet.classList.remove('open'); syncOverlay(); }
@@ -1374,7 +1407,92 @@
         overlay.addEventListener('click', function(){
             if (timeSheet.classList.contains('open')) { closeTimeSheet(); if (timeMode === 'resolve') abortResolve(); }
             if (resolveSheet.classList.contains('open')) { closeResolveSheet(); abortResolve(); }
+            if (smsSheet.classList.contains('open')) closeSmsSheet();
         });
+
+        // ===== Text customer sheet =====
+        // Every texting rule (POC enrolment, STOP, cell-only, test mode) lives in
+        // ntm-sms-agent; the sheet only shows its verdict and relays the send.
+        const smsSheet = $('smsSheet'), smsInfo = $('smsInfo'), smsTest = $('smsTest'), smsText = $('smsText');
+        const smsCount = $('smsCount'), smsHistory = $('smsHistory'), smsHistoryWrap = $('smsHistoryWrap'), smsSubmit = $('smsSubmit');
+        let smsTarget = null;   // { name, phone } when the agent says a text is allowed
+        let smsSending = false;
+        function smsSyncSubmit(){
+            smsCount.textContent = smsText.value.length + ' / 480';
+            smsSubmit.disabled = smsSending || !smsTarget || !smsText.value.trim();
+        }
+        function openSmsSheet(){ smsSheet.classList.add('open'); syncOverlay(); loadSmsInfo(); setTimeout(function(){ smsText.focus(); }, 350); }
+        function closeSmsSheet(){ smsSheet.classList.remove('open'); syncOverlay(); }
+        function renderSmsHistory(items){
+            smsHistory.innerHTML = '';
+            const shown = (items || []).filter(function(m){ return m.kind !== 'inbound'; }).slice(0, 8);
+            smsHistoryWrap.style.display = shown.length ? 'flex' : 'none';
+            shown.forEach(function(m){
+                const el = document.createElement('div');
+                el.className = 'm' + (m.direction === 'in' ? ' in' : '');
+                const meta = document.createElement('span'); meta.className = 'meta';
+                const who = m.direction === 'in' ? 'Customer' : (m.member ? memberName(m.member) : 'Hercules');
+                const when = m.at ? new Date(m.at).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '';
+                meta.textContent = who + ' · ' + when + (m.delivery === 'dry_run' ? ' · test, not sent' : '');
+                el.appendChild(meta);
+                el.appendChild(document.createTextNode(m.body || ''));
+                smsHistory.appendChild(el);
+            });
+        }
+        async function loadSmsInfo(){
+            smsTarget = null; smsSyncSubmit();
+            smsInfo.className = 'sheet-hint'; smsInfo.textContent = "Checking the customer's cell number…";
+            smsTest.style.display = 'none';
+            try {
+                const r = await fetch('/sms/info?ticketId=' + TICKET.id, { headers: { 'X-Pod-Token': POD_TOKEN } });
+                const d = await r.json();
+                if (!r.ok || !d.success) throw new Error(d.error || 'unavailable');
+                renderSmsHistory(d.history);
+                if (d.canSend) {
+                    smsTarget = { name: d.contactName || 'the customer', phone: d.phone };
+                    smsInfo.textContent = 'To ' + smsTarget.name + ' at ' + d.phone + (d.lineType === 'mobile' ? ' (cell, verified)' : '') + '.';
+                    smsTest.style.display = d.dryRun ? 'block' : 'none';
+                } else {
+                    smsInfo.className = 'sheet-hint blocked';
+                    smsInfo.textContent = "Can't text " + (d.contactName || 'this contact') + ': ' + (d.reason || 'not allowed.');
+                }
+            } catch (e) {
+                smsInfo.className = 'sheet-hint blocked';
+                smsInfo.textContent = e.message && e.message !== 'unavailable' ? e.message : 'The texting service is unavailable right now.';
+            }
+            smsSyncSubmit();
+        }
+        async function sendSms(){
+            const text = smsText.value.trim();
+            if (!text || !smsTarget || smsSending) return;
+            const member = await confirmIdentity('text the customer', selectedMember);
+            if (!member) return;
+            const ok = await showConfirm('Text ' + smsTarget.name + ' at ' + smsTarget.phone + '?');
+            if (!ok) return;
+            smsSending = true; smsSyncSubmit(); smsSubmit.textContent = 'Sending…';
+            try {
+                const r = await fetch('/sms/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Pod-Token': POD_TOKEN },
+                    body: JSON.stringify({ ticket_id: TICKET.id, text: text, member_identifier: member }),
+                });
+                const d = await r.json();
+                if (!r.ok || !d.success) throw new Error(d.error || 'The text was not sent.');
+                smsText.value = '';
+                closeSmsSheet();
+                if (d.delivery === 'dry_run') showBanner('Test mode: text to ' + d.to + ' was logged, not sent.', 'info');
+                else showToast('Text sent to ' + d.to);
+                if (d.warning) showBanner(d.warning, 'error');
+            } catch (e) {
+                showBanner(e.message || 'The text was not sent.', 'error');
+            } finally {
+                smsSending = false; smsSubmit.textContent = 'Send Text'; smsSyncSubmit();
+            }
+        }
+        smsText.addEventListener('input', smsSyncSubmit);
+        $('smsClose').addEventListener('click', closeSmsSheet);
+        $('smsCancel').addEventListener('click', closeSmsSheet);
+        smsSubmit.addEventListener('click', sendSms);
 
         // ===== Time sheet =====
         function populateMemberPicker(){
@@ -2834,6 +2952,7 @@
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         kbBtn.addEventListener('click', startKbArticle);
+        $('smsBtn').addEventListener('click', openSmsSheet);
         clearBtn.addEventListener('click', clearChat);
         aiTab.addEventListener('click', function(){ setMode('ai'); });
         liveTab.addEventListener('click', function(){ setMode('live'); });
