@@ -1042,34 +1042,53 @@
             signin.title = 'If the frame shows a sign-in page or stays blank, sign in to Pia here, then reload the frame';
             const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'pia-mini'; reload.textContent = 'Reload';
             const open = document.createElement('a'); open.className = 'pia-mini'; open.href = PIA.embed_url; open.target = '_blank'; open.rel = 'noopener'; open.textContent = 'Open in Pia';
+            const zoomOut = document.createElement('button'); zoomOut.type = 'button'; zoomOut.className = 'pia-mini'; zoomOut.textContent = '−'; zoomOut.title = 'Smaller';
+            const zoomIn = document.createElement('button'); zoomIn.type = 'button'; zoomIn.className = 'pia-mini'; zoomIn.textContent = '+'; zoomIn.title = 'Larger';
             const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'pia-mini'; toggle.textContent = 'Hide';
-            bar.appendChild(title); bar.appendChild(signin); bar.appendChild(reload); bar.appendChild(open); bar.appendChild(toggle);
+            bar.appendChild(title); bar.appendChild(signin); bar.appendChild(reload); bar.appendChild(open);
+            bar.appendChild(zoomOut); bar.appendChild(zoomIn); bar.appendChild(toggle);
             const frame = document.createElement('iframe');
             frame.className = 'pia-iframe';
             frame.src = PIA.embed_url;
             frame.setAttribute('allow', 'clipboard-write');
             frame.title = 'Pia chat for ticket #' + TICKET.id;
-            // Pia lays its chat out for a wide screen (chat column + Automation
-            // side panel, ~1200px) and we cannot restyle a cross-origin page. So
-            // the frame is rendered at Pia's natural width and scaled down to the
-            // card, and its height follows the pod's viewport — re-fitted whenever
-            // ConnectWise resizes the pod or the tech pops it out.
+            // Pia's embed is a cross-origin page we cannot restyle. Rendered at a
+            // desktop width (PIA_NATURAL_WIDTH) it lays out properly: a centred
+            // block of chat + Automation panel about PIA_CONTENT_WIDTH wide with
+            // empty margins either side. So the frame is rendered at that width
+            // and scaled so the CONTENT block fills the card (margins cropped),
+            // with a zoom the tech can nudge and that is remembered. Height
+            // follows the pod's viewport. Re-fitted on every resize (ConnectWise
+            // pod height changes, pop-out).
             const viewport = document.createElement('div');
             viewport.className = 'pia-viewport';
             viewport.appendChild(frame);
             wrap.appendChild(bar); wrap.appendChild(viewport);
+            let zoom = 1;
+            try { zoom = parseFloat(localStorage.getItem('pia-zoom')) || 1; } catch (e) {}
             function fit(){
                 if (viewport.style.display === 'none') return;
                 const cardWidth = viewport.clientWidth || card.clientWidth || 0;
                 if (!cardWidth) return;
-                const natural = Math.max(cardWidth, PIA_NATURAL_WIDTH);
-                const scale = cardWidth / natural;
+                // Wide pop-out: Pia already fits, show it 1:1 (times zoom).
+                const base = cardWidth >= PIA_NATURAL_WIDTH ? 1
+                    : Math.max(0.55, Math.min(cardWidth / PIA_CONTENT_WIDTH, 1.2));
+                const scale = base * zoom;
+                const renderWidth = Math.max(PIA_NATURAL_WIDTH, Math.round(cardWidth / scale));
+                const offset = Math.min(0, Math.round((cardWidth - renderWidth * scale) / 2));
                 const visible = Math.round(Math.max(340, Math.min(window.innerHeight * 0.62, 760)));
                 viewport.style.height = visible + 'px';
-                frame.style.width = natural + 'px';
+                frame.style.width = renderWidth + 'px';
                 frame.style.height = Math.round(visible / scale) + 'px';
-                frame.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
+                frame.style.transform = 'translateX(' + offset + 'px) scale(' + scale + ')';
             }
+            function setZoom(z){
+                zoom = Math.max(0.5, Math.min(1.6, Math.round(z * 20) / 20));
+                try { localStorage.setItem('pia-zoom', String(zoom)); } catch (e) {}
+                fit();
+            }
+            zoomOut.addEventListener('click', function(){ setZoom(zoom - 0.1); });
+            zoomIn.addEventListener('click', function(){ setZoom(zoom + 0.1); });
             fit();
             if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(viewport); ro.observe(document.body); }
             else window.addEventListener('resize', fit);
@@ -1093,8 +1112,10 @@
             wrap._frame = viewport; wrap._toggle = toggle;
             return wrap;
         }
-        // Width Pia's embedded chat is designed for (chat + Automation panel).
+        // Desktop width Pia's embed is rendered at, and the width of the centred
+        // content block (chat + Automation panel) it draws at that size.
         const PIA_NATURAL_WIDTH = 1200;
+        const PIA_CONTENT_WIDTH = 800;
         function trackPiaRun(card, correlationId, name){
             const line = document.createElement('div');
             line.className = 'ac-result muted pia-track';
