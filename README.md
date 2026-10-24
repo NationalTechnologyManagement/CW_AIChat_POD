@@ -108,6 +108,12 @@ AZURE_CLIENT_ID=...
 AZURE_CLIENT_SECRET=...
 ```
 
+The vault firewall denies by default and allows only the Hercules-Tech
+service's three Railway **Static Outbound IPs** (Settings > Networking on the
+service; region `iad`) plus admin workstations. If the service moves region or
+static IPs are toggled, the new addresses must be added to the vault's
+network rules before the next deploy, or boot fails with a 403 from the vault.
+
 Non-secret configuration (`CW_API_URL`, `CW_COMPANY_ID`, `HUDU_BASE_URL`,
 `SCREENCONNECT_BASE_URL`, `SMS_AGENT_URL`, `DATABASE_URL`, `REDIS_URL`, ...)
 remains ordinary environment variables.
