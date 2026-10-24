@@ -215,8 +215,9 @@ default model to match the ticket's summary and description against the
 client's catalogue, strictly (same task, not same topic). Matches appear as a
 *Pia can help* panel at the top of the chat with a **Start** button each; the
 full catalogue is also in the assistant's system prompt, so in conversation it
-can recognise "unlock Dana's account" as a Pia automation and offer it. The
-**Pia** button in the action row asks it to do exactly that for the ticket.
+can recognise "unlock Dana's account" as a Pia automation and offer it. A
+**Pia** mode tab (beside Assistant, Live and Call, shown only for Pia-enabled
+clients) holds Pia's own chat for the ticket at full pod size.
 
 **Starting one** is a write and goes through the usual confirm card
 (`run_pia_automation` → `/action`). The server re-checks that the client is

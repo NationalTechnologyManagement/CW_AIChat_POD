@@ -152,6 +152,7 @@
         body.pia-enabled .mode-pill .indicator{width:calc((100% - 8px) / 4);}
         body.pia-mode .mode-pill .indicator{transform:translateX(300%);}
         .mode-tab{position:relative;z-index:2;flex:1;min-width:0;white-space:nowrap;border:none;background:none;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:var(--icon);display:flex;align-items:center;justify-content:center;gap:7px;transition:color .2s;}
+        .mode-tab[hidden]{display:none;}
         .mode-tab .i{font-size:18px;}
         .mode-tab.active{color:var(--accent-text);}
         /* Three tabs in a narrow CW pod: shrink, then fall back to icons only. */
@@ -560,9 +561,7 @@
                             <button class="act time" id="addTimeBtn"><span class="i">schedule</span>Add Time</button>
                             <button class="act" id="saveBtn" disabled><span class="i">bookmark_add</span>Save</button>
                             <button class="act" id="kbBtn" title="Write this fix up as a Hudu KB article"{% if not hudu_enabled %} hidden{% endif %}><span class="i">menu_book</span>Create KB</button>
-                            <button class="act" id="smsBtn" title="Text the customer about this ticket"{% if not sms_enabled %} hidden{% endif %}><span class="i">sms</span>Text</button>
-                            <button class="act" id="piaBtn" title="Ask Hercules which Pia automation could handle this ticket"{% if not pia.enabled %} hidden{% endif %}><span class="i">smart_toy</span>Pia</button>
-                            <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
+                            <button class="act" id="smsBtn" title="Text the customer about this ticket"{% if not sms_enabled %} hidden{% endif %}><span class="i">sms</span>Text</button>                            <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
                         </div>
                     </div>
                 </section>
@@ -2266,15 +2265,6 @@
                 + 'if there is one, link it and tell me. Otherwise draft a short one (purpose line, then numbered steps) for me to review.';
             sendMessage();
         }
-        function askPia(){
-            if (!PIA || !PIA.enabled || currentMode === 'call') return;
-            if (currentMode === 'pia') setMode('ai');
-            if (liveMode) { showToast('Switch back to the Hercules chat to ask about Pia', 'error'); return; }
-            if (isStreaming) { showToast('Wait for Hercules to finish, then try again', 'error'); return; }
-            chatInput.value = 'Read this ticket and tell me which of this client\'s Pia automations, if any, would handle it. '
-                + 'Name the best match and what it would do here, then offer to start it. If nothing fits, say so.';
-            sendMessage();
-        }
         function kbDraftContext(){
             const card = liveKbCard();
             if (!card) return '';
@@ -3220,9 +3210,7 @@
         addTimeBtn.addEventListener('click', function(){ openTimeModal('add'); });
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
-        kbBtn.addEventListener('click', startKbArticle);
-        $('piaBtn').addEventListener('click', askPia);
-        $('smsBtn').addEventListener('click', openSmsSheet);
+        kbBtn.addEventListener('click', startKbArticle);        $('smsBtn').addEventListener('click', openSmsSheet);
         clearBtn.addEventListener('click', clearChat);
         aiTab.addEventListener('click', function(){ setMode('ai'); });
         liveTab.addEventListener('click', function(){ setMode('live'); });
