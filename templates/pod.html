@@ -205,6 +205,13 @@
         .pia-start{border:1px solid var(--accent-border);background:var(--accent-soft);color:var(--accent);border-radius:7px;padding:3px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;}
         .pia-start:hover{opacity:.85;}
         .ac-result.warn{color:#f0c08e;}
+        /* Pia's own chat for the ticket, framed inside the automation card */
+        .pia-embed{border:1px solid var(--border-2);border-radius:10px;overflow:hidden;background:var(--sunken);}
+        .pia-embed-bar{display:flex;align-items:center;gap:6px;padding:5px 8px;font-size:11px;color:var(--muted);background:var(--panel-2);border-bottom:1px solid var(--border-2);}
+        .pia-embed-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text-2);}
+        .pia-mini{border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:6px;padding:2px 8px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;cursor:pointer;text-decoration:none;white-space:nowrap;}
+        .pia-mini:hover{opacity:.85;}
+        .pia-iframe{display:block;width:100%;height:460px;border:0;background:#fff;}
 
         /* live channel header + system lines + typing + receipts */
         .live-head{align-self:center;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:5px 13px;text-align:center;}
@@ -977,7 +984,7 @@
             return {
                 kind: 'action', id: 'pia-' + s.package_id, action: 'run_pia_automation',
                 title: 'Start “' + s.button + '” in Pia for #' + TICKET.id,
-                subtitle: (s.name || '') + ' · Pia asks for details in its pod, then runs',
+                subtitle: (s.name || '') + ' · Pia asks for details in the card, then runs',
                 confirm_label: 'Start in Pia', text: s.reason || '',
                 package_id: s.package_id, automation_name: s.name || '',
             };
@@ -1009,18 +1016,57 @@
         }
         renderPiaSuggestions();
 
-        // After Start, Pia runs on its side; the card follows along. The usual
-        // first stop is "waiting for the tech" — Pia asks its questions as a form
-        // in the Pia pod on this ticket, which Hercules cannot answer for them.
+        // After Start, Pia runs on its side; the card follows along. Pia asks its
+        // questions (pick a computer, pick a user — with the choices) as a form in
+        // ITS chat for this ticket, which the API neither exposes nor submits. So
+        // the card frames Pia's own chat page for the ticket — the same page Pia's
+        // browser extension embeds into Autotask/Halo — and the tech answers there.
         const PIA_STATE_LABELS = {
             queued: 'Pia has queued it…',
             running: 'Pia is running it…',
-            waiting_for_input: 'Pia needs your answer in the Pia pod on this ticket',
+            waiting_for_input: 'Pia needs your answer below',
             completed: 'Pia finished',
             error: 'Pia reported a failure',
             cancelled: 'Cancelled in Pia',
             unknown: 'Waiting for Pia to pick it up…',
         };
+        function piaFrame(card){
+            if (!PIA || !PIA.embed_url) return null;
+            const wrap = document.createElement('div');
+            wrap.className = 'pia-embed';
+            const bar = document.createElement('div');
+            bar.className = 'pia-embed-bar';
+            const title = document.createElement('span'); title.textContent = 'Pia · ticket #' + TICKET.id;
+            const signin = document.createElement('button'); signin.type = 'button'; signin.className = 'pia-mini'; signin.textContent = 'Sign in to Pia';
+            signin.title = 'If the frame shows a sign-in page or stays blank, sign in to Pia here, then reload the frame';
+            const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'pia-mini'; reload.textContent = 'Reload';
+            const open = document.createElement('a'); open.className = 'pia-mini'; open.href = PIA.embed_url; open.target = '_blank'; open.rel = 'noopener'; open.textContent = 'Open in Pia';
+            const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'pia-mini'; toggle.textContent = 'Hide';
+            bar.appendChild(title); bar.appendChild(signin); bar.appendChild(reload); bar.appendChild(open); bar.appendChild(toggle);
+            const frame = document.createElement('iframe');
+            frame.className = 'pia-iframe';
+            frame.src = PIA.embed_url;
+            frame.setAttribute('allow', 'clipboard-write');
+            frame.title = 'Pia chat for ticket #' + TICKET.id;
+            wrap.appendChild(bar); wrap.appendChild(frame);
+            signin.addEventListener('click', function(){
+                // Pia's extension does exactly this: sign in in a popup (cookies
+                // are SameSite=None), then re-load the embedded chat.
+                const w = window.open(PIA.auth_url || PIA.embed_url, 'pia-auth', 'width=520,height=680');
+                const timer = setInterval(function(){
+                    if (!w || w.closed) { clearInterval(timer); frame.src = PIA.embed_url; }
+                }, 800);
+            });
+            reload.addEventListener('click', function(){ frame.src = PIA.embed_url; });
+            toggle.addEventListener('click', function(){
+                const hidden = frame.style.display === 'none';
+                frame.style.display = hidden ? '' : 'none';
+                toggle.textContent = hidden ? 'Hide' : 'Show';
+            });
+            card.appendChild(wrap);
+            wrap._frame = frame; wrap._toggle = toggle;
+            return wrap;
+        }
         function trackPiaRun(card, correlationId, name){
             const line = document.createElement('div');
             line.className = 'ac-result muted pia-track';
@@ -1028,6 +1074,8 @@
             const label = document.createElement('span'); label.textContent = PIA_STATE_LABELS.unknown;
             line.appendChild(icon); line.appendChild(label);
             card.appendChild(line);
+            const embed = piaFrame(card);
+            scrollThread(aiThread);
             let polls = 0, lastState = '', told = false;
             async function poll(){
                 polls += 1;
@@ -1052,10 +1100,14 @@
                         if (final || (state === 'waiting_for_input' && !told)) {
                             told = told || state === 'waiting_for_input';
                             recordActionOutcome('[Pia automation “' + name + '” (correlation ' + correlationId + '): ' + text
-                                + (final ? '' : '. The tech answers Pia in the Pia pod on this ticket; check_pia_automation reports progress.') + ']');
+                                + (final ? '' : '. The tech answers Pia in the Pia chat framed in the card; check_pia_automation reports progress.') + ']');
                         }
                     }
-                    if (final) return;
+                    if (final) {
+                        // Leave Pia's transcript available but out of the way.
+                        if (embed && embed._frame && state === 'completed') { embed._frame.style.display = 'none'; embed._toggle.textContent = 'Show'; }
+                        return;
+                    }
                 }
                 // Poll briskly at first (the form usually appears within seconds),
                 // then ease off; stop after ~10 minutes — the tech can ask Hercules.

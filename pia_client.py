@@ -82,6 +82,23 @@ def base_url() -> str:
     return _base_url
 
 
+# Pia's embeddable Tech Assist chat for one ticket — the page its own browser
+# extension iframes into Autotask/Halo. Cookie (Entra) authenticated; the
+# extension opens EXTENSION_AUTH_PATH in a popup when the cookie is missing.
+EMBED_PATH = "/Extension/PiaEmbed/"
+EXTENSION_AUTH_PATH = "/Extension/Authenticate"
+
+
+def embed_url(ticket_id: int | None) -> str:
+    if not _base_url or not ticket_id:
+        return ""
+    return f"{_base_url}{EMBED_PATH}?ticketId={int(ticket_id)}"
+
+
+def auth_url() -> str:
+    return f"{_base_url}{EXTENSION_AUTH_PATH}" if _base_url else ""
+
+
 def _reset_caches() -> None:
     """Tests only."""
     global _clients_cache
@@ -397,7 +414,8 @@ def describe(status: dict | None, logs: list[dict]) -> dict:
     summaries = {
         "queued": "Pia has queued the automation.",
         "running": "Pia is running the automation.",
-        "waiting_for_input": "Pia is waiting for the technician to answer its question in the Pia pod on this ticket."
+        "waiting_for_input": "Pia is waiting for the technician to answer its question (the form is in Pia's chat "
+                             "for this ticket — framed in the Hercules card, or the Pia pod)."
                              if (waiting_on_form or prompt) else "Pia is waiting (on an approval or an agent).",
         "completed": "The automation finished.",
         "error": "The automation failed.",

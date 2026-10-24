@@ -290,6 +290,10 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(pia["client_name"], "National Technology Management")
         self.assertEqual(pia["automation_count"], 2)
         self.assertEqual(pia["suggestions"], picks)
+        # Pia's own chat for the ticket, framed in the card so its forms (with
+        # their choices) reach the tech without leaving Hercules.
+        self.assertEqual(pia["embed_url"], "https://trustntm.pia.ai/Extension/PiaEmbed/?ticketId=500")
+        self.assertEqual(pia["auth_url"], "https://trustntm.pia.ai/Extension/Authenticate")
         suggest.assert_awaited_once()
         self.assertEqual(suggest.await_args.args[0]["id"], 500)
 
@@ -298,6 +302,7 @@ class EndpointTests(unittest.TestCase):
             pia = run(main._pia_for_pod({**TICKET, "company_id": 4242}))
         self.assertFalse(pia["enabled"])
         self.assertEqual(pia["reason"], "not_in_pia")
+        self.assertEqual(pia["embed_url"], "")
         suggest.assert_not_awaited()
 
 

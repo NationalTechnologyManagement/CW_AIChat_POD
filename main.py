@@ -573,8 +573,10 @@ def _tools_section(available: list[str]) -> str:
                 "  outright), CALL run_pia_automation with that package_id and a reason grounded in the\n"
                 "  ticket. Only package_ids from the PIA list for this client; never invent one.\n"
                 "- Pia gathers the inputs itself: after Start, it opens its own chat on this ticket and\n"
-                "  asks the tech (which user, which mailbox) as a form in the Pia pod. Say that in one\n"
-                "  line so they know to look there. Hercules cannot fill Pia's form.\n"
+                "  asks the tech (which computer, which user, which mailbox) as a form with the choices\n"
+                "  listed. That Pia chat appears inside the automation's card in this Hercules chat, so\n"
+                "  say in one line that Pia will ask them for the details there. Hercules cannot fill\n"
+                "  Pia's form.\n"
                 "- Check progress with check_pia_automation when asked, or when the card's outcome is\n"
                 "  in the conversation. Report Pia's result plainly; if it failed, troubleshoot normally.\n"
                 "- Never start an automation the tech did not agree to, and never run two for one ask.")
@@ -963,7 +965,7 @@ EMPTY_OPTIONS = {"types": [], "subtypes": {}, "items": {}}
 
 # What the pod is told about Pia for this ticket's client.
 EMPTY_PIA = {"configured": False, "enabled": False, "client_name": "", "reason": "not_configured",
-             "automation_count": 0, "suggestions": []}
+             "automation_count": 0, "suggestions": [], "embed_url": "", "auth_url": ""}
 PIA_POD_DEADLINE_SECONDS = float(os.getenv("PIA_POD_DEADLINE_SECONDS", "12"))
 
 
@@ -990,6 +992,13 @@ async def _pia_for_pod(ticket: dict) -> dict:
         "reason": ready.get("reason", ""),
         "automation_count": len(ready.get("automations") or []),
         "suggestions": [],
+        # Pia's own chat for this ticket, as its browser extension embeds it.
+        # Pia's forms (pick a computer, pick a user) live ONLY there — the API
+        # exposes neither the choices nor a way to submit — so the card frames
+        # it once an automation starts. Cookie-authenticated: a tech who is not
+        # signed in to Pia gets its sign-in via auth_url in a popup.
+        "embed_url": pia_client.embed_url(ticket.get("id")) if ready.get("enabled") else "",
+        "auth_url": pia_client.auth_url() if ready.get("enabled") else "",
     }
     if not out["enabled"]:
         return out
@@ -1591,7 +1600,7 @@ async def _start_pia_automation(ticket: dict, package_id: str):
     print(f"[pia] started '{option['name']}' on ticket {ticket['id']} -> {correlation_id}")
     return {
         "success": True,
-        "message": f"Started “{option['button']}” in Pia — Pia will ask for details in its pod on this ticket",
+        "message": f"Started “{option['button']}” in Pia — answer Pia's questions below",
         "correlation_id": correlation_id,
         "automation": option["name"],
     }

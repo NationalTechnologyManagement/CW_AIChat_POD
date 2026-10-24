@@ -695,8 +695,10 @@ async def _tool_get_hudu_asset(args: dict, ticket: dict) -> dict:
 
 PIA_HOW_IT_WORKS = (
     "Starting an automation (run_pia_automation) makes Pia open its own chat session on this ticket; "
-    "Pia asks the technician for any missing details as a form in the Pia pod on the ticket, then "
-    "runs and posts an audit note. Hercules tracks it with check_pia_automation."
+    "Pia asks the technician for any missing details (which computer, which user) as a form with the "
+    "choices filled in. That Pia chat is framed inside the automation's card in this Hercules chat, so "
+    "the tech answers it right there (or in the Pia pod); Pia then runs and posts an audit note. "
+    "Hercules tracks it with check_pia_automation."
 )
 
 
@@ -742,8 +744,9 @@ async def _tool_check_pia_automation(args: dict, ticket: dict) -> dict:
     except pia_client.PiaError as e:
         return {"error": str(e)}
     if report["state"] == "waiting_for_input":
-        report["instruction"] = ("Tell the tech, in one line, that Pia is waiting for them in the Pia pod on this "
-                                 "ticket and what it is asking. Hercules cannot answer Pia's form for them.")
+        report["instruction"] = ("Tell the tech, in one line, that Pia is waiting for them and what it is asking; "
+                                 "Pia's form is shown inside the automation's card in this chat (or in the Pia pod). "
+                                 "Hercules cannot answer Pia's form for them.")
     return report
 
 
@@ -814,7 +817,7 @@ def build_proposal(call_id: str, name: str, args: dict, ticket: dict) -> dict:
         option = pia_client.find_option(ticket.get("company_id"), package_id)
         label = option["button"] if option else "a Pia automation"
         automation = option["name"] if option else ""
-        subtitle = (f"{automation} · Pia asks for details in its pod, then runs" if option
+        subtitle = (f"{automation} · Pia asks for details in the card, then runs" if option
                     else "Not in this client's Pia catalogue — it will be refused")
         return _proposal(call_id, name, f"Start “{label}” in Pia for {ref}", subtitle, "Start in Pia",
                          text=str(args.get("reason") or "").strip(), package_id=package_id,

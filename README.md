@@ -222,14 +222,21 @@ can recognise "unlock Dana's account" as a Pia automation and offer it. The
 (`run_pia_automation` → `/action`). The server re-checks that the client is
 Pia-enabled and that the package is in *that client's* catalogue before
 calling Pia. Pia then opens its own chat session on the ticket and asks the
-tech for whatever it still needs (which user, which mailbox) as a form **in the
-Pia pod on the ticket** — the API offers no way to answer that form, and the
-package input keys are not published, so Hercules deliberately passes no
-inputs. The card polls `/pia/status` and shows the state (queued, running,
-*waiting for your answer in the Pia pod* with Pia's question, completed,
-failed), and the outcome is fed back into the chat so `check_pia_automation`
-and follow-up questions are grounded. Pia posts its own audit notes to the
-ticket as it runs.
+tech for whatever it still needs (which computer, which user, which mailbox)
+as a form with the choices filled in. The API exposes neither those choices
+nor a way to submit the form, and the package input keys are not published,
+so Hercules deliberately passes no inputs. Instead the card **frames Pia's own
+chat for the ticket** (`/Extension/PiaEmbed/?ticketId=…`, the page Pia's
+browser extension embeds into Autotask and Halo) as soon as the automation
+starts, so the tech picks from Pia's list and submits without leaving
+Hercules. That page is cookie-authenticated against the tech's Pia sign-in:
+if it shows a sign-in page or stays blank, **Sign in to Pia** opens Pia's
+`/Extension/Authenticate` in a popup (as the extension does) and the frame
+reloads when it closes; **Open in Pia** is the same chat in a new tab. The
+card also polls `/pia/status` and shows the state (queued, running, *needs your
+answer below* with Pia's question, completed, failed), and the outcome is fed
+back into the chat so `check_pia_automation` and follow-up questions are
+grounded. Pia posts its own audit notes to the ticket as it runs.
 
 ## Admin dashboard settings
 
