@@ -211,7 +211,8 @@
         .pia-embed-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text-2);}
         .pia-mini{border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:6px;padding:2px 8px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;cursor:pointer;text-decoration:none;white-space:nowrap;}
         .pia-mini:hover{opacity:.85;}
-        .pia-iframe{display:block;width:100%;height:460px;border:0;background:#fff;}
+        .pia-viewport{position:relative;width:100%;height:460px;overflow:hidden;background:#fff;}
+        .pia-iframe{position:absolute;top:0;left:0;display:block;width:100%;height:100%;border:0;background:#fff;transform-origin:top left;}
 
         /* live channel header + system lines + typing + receipts */
         .live-head{align-self:center;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:5px 13px;text-align:center;}
@@ -1048,7 +1049,31 @@
             frame.src = PIA.embed_url;
             frame.setAttribute('allow', 'clipboard-write');
             frame.title = 'Pia chat for ticket #' + TICKET.id;
-            wrap.appendChild(bar); wrap.appendChild(frame);
+            // Pia lays its chat out for a wide screen (chat column + Automation
+            // side panel, ~1200px) and we cannot restyle a cross-origin page. So
+            // the frame is rendered at Pia's natural width and scaled down to the
+            // card, and its height follows the pod's viewport — re-fitted whenever
+            // ConnectWise resizes the pod or the tech pops it out.
+            const viewport = document.createElement('div');
+            viewport.className = 'pia-viewport';
+            viewport.appendChild(frame);
+            wrap.appendChild(bar); wrap.appendChild(viewport);
+            function fit(){
+                if (viewport.style.display === 'none') return;
+                const cardWidth = viewport.clientWidth || card.clientWidth || 0;
+                if (!cardWidth) return;
+                const natural = Math.max(cardWidth, PIA_NATURAL_WIDTH);
+                const scale = cardWidth / natural;
+                const visible = Math.round(Math.max(340, Math.min(window.innerHeight * 0.62, 760)));
+                viewport.style.height = visible + 'px';
+                frame.style.width = natural + 'px';
+                frame.style.height = Math.round(visible / scale) + 'px';
+                frame.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
+            }
+            fit();
+            if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(viewport); ro.observe(document.body); }
+            else window.addEventListener('resize', fit);
+            frame.addEventListener('load', fit);
             signin.addEventListener('click', function(){
                 // Pia's extension does exactly this: sign in in a popup (cookies
                 // are SameSite=None), then re-load the embedded chat.
@@ -1059,14 +1084,17 @@
             });
             reload.addEventListener('click', function(){ frame.src = PIA.embed_url; });
             toggle.addEventListener('click', function(){
-                const hidden = frame.style.display === 'none';
-                frame.style.display = hidden ? '' : 'none';
+                const hidden = viewport.style.display === 'none';
+                viewport.style.display = hidden ? '' : 'none';
                 toggle.textContent = hidden ? 'Hide' : 'Show';
+                if (hidden) fit();
             });
             card.appendChild(wrap);
-            wrap._frame = frame; wrap._toggle = toggle;
+            wrap._frame = viewport; wrap._toggle = toggle;
             return wrap;
         }
+        // Width Pia's embedded chat is designed for (chat + Automation panel).
+        const PIA_NATURAL_WIDTH = 1200;
         function trackPiaRun(card, correlationId, name){
             const line = document.createElement('div');
             line.className = 'ac-result muted pia-track';
