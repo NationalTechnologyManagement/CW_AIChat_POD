@@ -2,9 +2,12 @@
 # Brings up Redis (the shared bus), Postgres (the pod's durable store), the
 # FastAPI pod, and the Hercules Node server (built from the sibling repo).
 #
-# Secrets (CW_*, OPENROUTER_*, POD_SECRET) are loaded from each service's .env
-# via env_file. Container-network values (DATABASE_URL, REDIS_URL, PORT, the
-# bridge URL/secret) are set under `environment` so they override .env.
+# Secrets (CW_*, OPENROUTER_*, POD_SECRET) come from Azure Key Vault when the
+# pod's .env sets AZURE_KEY_VAULT_URL (+ AZURE_TENANT_ID / AZURE_CLIENT_ID /
+# AZURE_CLIENT_SECRET); otherwise they are loaded from each service's .env via
+# env_file. See README "Secrets (Azure Key Vault)". Container-network values
+# (DATABASE_URL, REDIS_URL, PORT, the bridge URL/secret) are set under
+# `environment` so they override .env.
 #
 #   docker compose up --build
 #   docker compose up --scale pod=2 --scale hercules=2   # Redis fan-out check

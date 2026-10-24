@@ -76,6 +76,52 @@ Two escape hatches when even that is too small:
 - A second Manage Hosted API record with **Type = Tab** (same URL) renders
   Hercules as a full tab on the ticket screen at nearly full window height.
 
+## Secrets (Azure Key Vault)
+
+API keys and shared secrets are not stored on the host. On boot, `vault.py`
+reads them from the **kv-ntm-apps** Key Vault (resource group `rg-ntm-secrets`)
+and writes each one into the process environment under the variable name the
+code already uses, so every client module stays env-driven. The vault wins over
+anything the platform has set.
+
+| Environment variable       | Vault secret                  | Shared with                     |
+| -------------------------- | ----------------------------- | ------------------------------- |
+| `CW_CLIENT_ID`             | `cw-client-id`                | every NTM service (one key set) |
+| `CW_PUBLIC_KEY`            | `cw-public-key`               | every NTM service (one key set) |
+| `CW_PRIVATE_KEY`           | `cw-private-key`              | every NTM service (one key set) |
+| `HUDU_API_KEY`             | `hudu-api-key`                | every NTM service               |
+| `OPENROUTER_API_KEY`       | `openrouter-api-key`          |                                 |
+| `SCREENCONNECT_API_SECRET` | `screenconnect-api-secret`    | ScreenConnect RESTful extension |
+| `SMS_AGENT_SECRET`         | `sms-agent-tech-api-secret`   | ntm-sms-agent (`TECH_API_SECRET`) |
+| `POD_SECRET`               | `hercules-pod-secret`         | the Hercules pod clients        |
+| `LIVE_BRIDGE_SECRET`       | `hercules-live-bridge-secret` | the Hercules Node server        |
+| `CALL_BRIDGE_SECRET`       | `hercules-ingest-secret`      | the voice bridge                |
+
+The service authenticates to the vault as the `hercules-tech-keyvault-reader`
+service principal, which holds **Key Vault Secrets User** on the vault and
+nothing else. Only these four variables stay on the platform (Railway):
+
+```env
+AZURE_KEY_VAULT_URL=https://kv-ntm-apps.vault.azure.net
+AZURE_TENANT_ID=...
+AZURE_CLIENT_ID=...
+AZURE_CLIENT_SECRET=...
+```
+
+Non-secret configuration (`CW_API_URL`, `CW_COMPANY_ID`, `HUDU_BASE_URL`,
+`SCREENCONNECT_BASE_URL`, `SMS_AGENT_URL`, `DATABASE_URL`, `REDIS_URL`, ...)
+remains ordinary environment variables.
+
+To rotate a key, set a new version of the secret in the vault and restart the
+service; nothing on the platform changes. A vault that is configured but
+unreachable or that refuses the credential is fatal on boot. A single secret
+that is missing from the vault is logged and the environment value, if any, is
+used instead.
+
+Without `AZURE_KEY_VAULT_URL` (tests, local dev) the vault is skipped and `.env`
+applies as before. A developer who is signed in with `az login` and has
+**Key Vault Secrets User** can set just the URL and get the live keys locally.
+
 ## ScreenConnect setup
 
 Install the **RESTful API Manager** extension in ScreenConnect, then set:
@@ -85,11 +131,11 @@ Install the **RESTful API Manager** extension in ScreenConnect, then set:
 - `RESTfulAllowedOrigin`: the public origin of this Hercules service, such as
   `https://your-hercules-service.up.railway.app`
 
-Add matching values to the Hercules service environment:
+Store the secret in the vault as `screenconnect-api-secret` and add the
+non-secret values to the Hercules service environment:
 
 ```env
 SCREENCONNECT_BASE_URL=https://your-instance.screenconnect.com
-SCREENCONNECT_API_SECRET=the-value-from-RESTfulAuthenticationSecret
 SCREENCONNECT_ORIGIN=https://your-hercules-service.up.railway.app
 ```
 
@@ -104,11 +150,11 @@ normally and must have permission to view and join the matched Access session.
 
 ## Hudu setup
 
-Create an API key in Hudu (**Admin > API Keys**, read access is enough) and set:
+Create an API key in Hudu (**Admin > API Keys**, read access is enough), store
+it in the vault as `hudu-api-key`, and set:
 
 ```env
 HUDU_BASE_URL=https://your-instance.huducloud.com
-HUDU_API_KEY=the-key
 ```
 
 Hercules then searches Hudu on the tech's behalf: articles, assets (with the

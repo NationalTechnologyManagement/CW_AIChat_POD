@@ -15,6 +15,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import vault
+
+# API keys and shared secrets come from Azure Key Vault (kv-ntm-apps) and are
+# written into os.environ here, before any module below reads them. Without
+# AZURE_KEY_VAULT_URL (tests, local dev) the .env / host environment is used as-is.
+vault.load()
+
 from fastapi import FastAPI, HTTPException, Request, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -36,7 +43,7 @@ from cw_client import CWAuthError, CWNotFoundError, CWAPIError
 
 POD_SECRET = os.getenv("POD_SECRET", "")
 if not POD_SECRET:
-    raise RuntimeError("POD_SECRET environment variable must be set. Refusing to start without auth.")
+    raise RuntimeError("POD_SECRET must be set (vault secret hercules-pod-secret or environment). Refusing to start without auth.")
 
 CW_MANAGE_URL = os.getenv("CW_MANAGE_URL", "https://na.myconnectwise.net")
 # Comma-separated, tried in order: the old Support Tier1 board (#34, now named "DO
