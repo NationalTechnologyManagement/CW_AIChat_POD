@@ -148,6 +148,9 @@
         .mode-pill .indicator{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px) / 3);border-radius:8px;background:var(--accent);transform:translateX(0);transition:transform .34s cubic-bezier(.4,0,.2,1),background .34s;box-shadow:0 4px 14px -4px var(--accent-glow);}
         body.live-mode .mode-pill .indicator{transform:translateX(100%);}
         body.call-mode .mode-pill .indicator{transform:translateX(200%);}
+        /* A fourth tab (Pia) when the client is set up in Pia. */
+        body.pia-enabled .mode-pill .indicator{width:calc((100% - 8px) / 4);}
+        body.pia-mode .mode-pill .indicator{transform:translateX(300%);}
         .mode-tab{position:relative;z-index:2;flex:1;min-width:0;white-space:nowrap;border:none;background:none;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:var(--icon);display:flex;align-items:center;justify-content:center;gap:7px;transition:color .2s;}
         .mode-tab .i{font-size:18px;}
         .mode-tab.active{color:var(--accent-text);}
@@ -163,6 +166,14 @@
         body.live-mode .thread.live{opacity:1;transform:none;pointer-events:auto;}
         body.call-mode .thread.ai,body.call-mode .thread.live{opacity:0;transform:translateX(-10px);pointer-events:none;}
         body.call-mode .thread.call{opacity:1;transform:none;pointer-events:auto;}
+        body.pia-mode .thread.ai,body.pia-mode .thread.live,body.pia-mode .thread.call{opacity:0;transform:translateX(-10px);pointer-events:none;}
+        body.pia-mode .thread.pia{opacity:1;transform:none;pointer-events:auto;}
+        /* Pia gets the whole thread area: no gaps, the embed fills it. */
+        .thread.pia{padding:0 16px 8px;gap:0;overflow:hidden;}
+        .thread.pia .pia-embed{flex:1;min-height:0;display:flex;flex-direction:column;}
+        .thread.pia .pia-viewport{flex:1;min-height:0;}
+        body.pia-mode .composer{display:none;}
+        body.pia-mode .attach-strip{display:none !important;}
 
         .welcome{text-align:center;color:var(--muted);padding:22px 10px;font-size:12.5px;line-height:1.6;}
 
@@ -211,7 +222,7 @@
         .pia-embed-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text-2);}
         .pia-mini{border:1px solid var(--border-4);background:var(--panel);color:var(--text-2);border-radius:6px;padding:2px 8px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;cursor:pointer;text-decoration:none;white-space:nowrap;}
         .pia-mini:hover{opacity:.85;}
-        .pia-viewport{position:relative;width:100%;height:460px;overflow:hidden;background:#fff;}
+        .pia-viewport{position:relative;width:100%;overflow:hidden;background:#fff;}
         .pia-iframe{position:absolute;top:0;left:0;display:block;width:100%;height:100%;border:0;background:#fff;transform-origin:top left;}
 
         /* live channel header + system lines + typing + receipts */
@@ -452,7 +463,7 @@
         body.drag-over .thread.ai,body.drag-over .thread.live{outline:2px dashed var(--accent);outline-offset:-6px;border-radius:10px;}
     </style>
 </head>
-<body>
+<body{% if pia.enabled %} class="pia-enabled"{% endif %}>
     {% if error %}
     <div class="error-wrap">
         <div class="error-logo"><img src="https://seahorse-space.nyc3.cdn.digitaloceanspaces.com/website/ntm_shield_small.svg" alt="NTM"></div>
@@ -517,6 +528,7 @@
                             <button type="button" class="mode-tab active" id="aiTab" title="Assistant"><span class="i">forum</span><span class="lbl">Assistant</span></button>
                             <button type="button" class="mode-tab" id="liveTab" title="Live chat with the customer"><span class="i">support_agent</span><span class="lbl">Live</span></button>
                             <button type="button" class="mode-tab" id="callTab" title="Phone call transcript"><span class="i">call</span><span class="lbl">Call</span></button>
+                            <button type="button" class="mode-tab" id="piaTab" title="Pia automations for this ticket"{% if not pia.enabled %} hidden{% endif %}><span class="i">smart_toy</span><span class="lbl">Pia</span></button>
                         </div>
                     </div>
 
@@ -527,6 +539,7 @@
                         <div class="thread live" id="liveThread">
                             <div class="live-head" id="liveHead">Live channel · messaging as <b id="liveAsName">technician</b></div>
                         </div>
+                        <div class="thread pia" id="piaThread"></div>
                         <div class="thread call" id="callThread">
                             <div class="live-head" id="callHead">Call transcript · <b id="callState">connecting…</b></div>
                             <div class="empty-hint" id="callEmpty">Checking this ticket for calls…</div>
@@ -839,7 +852,8 @@
         const saveBtn = $('saveBtn'), resolveBtn = $('resolveBtn'), addTimeBtn = $('addTimeBtn'), clearBtn = $('clearBtn'), kbBtn = $('kbBtn');
         const modelSelect = $('modelSelect'), modeText = $('modeText');
         const contextCard = $('contextCard');
-        const aiTab = $('aiTab'), liveTab = $('liveTab'), callTab = $('callTab');
+        const aiTab = $('aiTab'), liveTab = $('liveTab'), callTab = $('callTab'), piaTab = $('piaTab');
+        const piaThread = $('piaThread');
         const callList = $('callList'), callEmpty = $('callEmpty'), callStateEl = $('callState');
         const attachBtn = $('attachBtn'), fileInput = $('fileInput'), attachStrip = $('attachStrip');
         const toast = $('toast'), resultBanner = $('resultBanner'), resultBannerText = $('resultBannerText'), resultBannerClose = $('resultBannerClose');
@@ -1025,41 +1039,51 @@
         const PIA_STATE_LABELS = {
             queued: 'Pia has queued it…',
             running: 'Pia is running it…',
-            waiting_for_input: 'Pia needs your answer below',
+            waiting_for_input: 'Pia needs your answer in the Pia tab',
             completed: 'Pia finished',
             error: 'Pia reported a failure',
             cancelled: 'Cancelled in Pia',
             unknown: 'Waiting for Pia to pick it up…',
         };
-        function piaFrame(card){
-            if (!PIA || !PIA.embed_url) return null;
+        // Desktop width Pia's embed is rendered at, and the width of the centred
+        // content block (chat + Automation panel) it draws at that size.
+        const PIA_NATURAL_WIDTH = 1200;
+        const PIA_CONTENT_WIDTH = 800;
+
+        // ===== The Pia tab =====
+        // Pia's own chat for this ticket — the page Pia's browser extension embeds
+        // into other PSAs — gets a mode tab of its own so it has the whole pod to
+        // run an automation in, with Assistant one click away. It is created the
+        // first time it is needed and kept alive across tab switches, so Pia's
+        // session (and a half-answered form) survives going back to the chat.
+        //
+        // The embed is a cross-origin page we cannot restyle. Rendered at a
+        // desktop width it lays out properly: a centred block of chat + Automation
+        // panel about PIA_CONTENT_WIDTH wide with empty margins either side. So the
+        // frame is rendered at that width and scaled so the CONTENT block fills
+        // the tab (margins cropped), with a zoom the tech can nudge and that is
+        // remembered. Re-fitted on every resize (ConnectWise pod height, pop-out).
+        let piaPane = null;
+        function ensurePiaPane(){
+            if (piaPane || !PIA || !PIA.embed_url) return piaPane;
             const wrap = document.createElement('div');
             wrap.className = 'pia-embed';
             const bar = document.createElement('div');
             bar.className = 'pia-embed-bar';
             const title = document.createElement('span'); title.textContent = 'Pia · ticket #' + TICKET.id;
             const signin = document.createElement('button'); signin.type = 'button'; signin.className = 'pia-mini'; signin.textContent = 'Sign in to Pia';
-            signin.title = 'If the frame shows a sign-in page or stays blank, sign in to Pia here, then reload the frame';
+            signin.title = 'If Pia shows a sign-in page or stays blank, sign in here, then reload';
             const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'pia-mini'; reload.textContent = 'Reload';
             const open = document.createElement('a'); open.className = 'pia-mini'; open.href = PIA.embed_url; open.target = '_blank'; open.rel = 'noopener'; open.textContent = 'Open in Pia';
             const zoomOut = document.createElement('button'); zoomOut.type = 'button'; zoomOut.className = 'pia-mini'; zoomOut.textContent = '−'; zoomOut.title = 'Smaller';
             const zoomIn = document.createElement('button'); zoomIn.type = 'button'; zoomIn.className = 'pia-mini'; zoomIn.textContent = '+'; zoomIn.title = 'Larger';
-            const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'pia-mini'; toggle.textContent = 'Hide';
             bar.appendChild(title); bar.appendChild(signin); bar.appendChild(reload); bar.appendChild(open);
-            bar.appendChild(zoomOut); bar.appendChild(zoomIn); bar.appendChild(toggle);
+            bar.appendChild(zoomOut); bar.appendChild(zoomIn);
             const frame = document.createElement('iframe');
             frame.className = 'pia-iframe';
             frame.src = PIA.embed_url;
             frame.setAttribute('allow', 'clipboard-write');
             frame.title = 'Pia chat for ticket #' + TICKET.id;
-            // Pia's embed is a cross-origin page we cannot restyle. Rendered at a
-            // desktop width (PIA_NATURAL_WIDTH) it lays out properly: a centred
-            // block of chat + Automation panel about PIA_CONTENT_WIDTH wide with
-            // empty margins either side. So the frame is rendered at that width
-            // and scaled so the CONTENT block fills the card (margins cropped),
-            // with a zoom the tech can nudge and that is remembered. Height
-            // follows the pod's viewport. Re-fitted on every resize (ConnectWise
-            // pod height changes, pop-out).
             const viewport = document.createElement('div');
             viewport.className = 'pia-viewport';
             viewport.appendChild(frame);
@@ -1067,17 +1091,15 @@
             let zoom = 1;
             try { zoom = parseFloat(localStorage.getItem('pia-zoom')) || 1; } catch (e) {}
             function fit(){
-                if (viewport.style.display === 'none') return;
-                const cardWidth = viewport.clientWidth || card.clientWidth || 0;
-                if (!cardWidth) return;
+                const width = viewport.clientWidth || 0;
+                const visible = viewport.clientHeight || 0;
+                if (!width || !visible) return;
                 // Wide pop-out: Pia already fits, show it 1:1 (times zoom).
-                const base = cardWidth >= PIA_NATURAL_WIDTH ? 1
-                    : Math.max(0.55, Math.min(cardWidth / PIA_CONTENT_WIDTH, 1.2));
+                const base = width >= PIA_NATURAL_WIDTH ? 1
+                    : Math.max(0.55, Math.min(width / PIA_CONTENT_WIDTH, 1.2));
                 const scale = base * zoom;
-                const renderWidth = Math.max(PIA_NATURAL_WIDTH, Math.round(cardWidth / scale));
-                const offset = Math.min(0, Math.round((cardWidth - renderWidth * scale) / 2));
-                const visible = Math.round(Math.max(340, Math.min(window.innerHeight * 0.62, 760)));
-                viewport.style.height = visible + 'px';
+                const renderWidth = Math.max(PIA_NATURAL_WIDTH, Math.round(width / scale));
+                const offset = Math.min(0, Math.round((width - renderWidth * scale) / 2));
                 frame.style.width = renderWidth + 'px';
                 frame.style.height = Math.round(visible / scale) + 'px';
                 frame.style.transform = 'translateX(' + offset + 'px) scale(' + scale + ')';
@@ -1089,8 +1111,7 @@
             }
             zoomOut.addEventListener('click', function(){ setZoom(zoom - 0.1); });
             zoomIn.addEventListener('click', function(){ setZoom(zoom + 0.1); });
-            fit();
-            if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(viewport); ro.observe(document.body); }
+            if (window.ResizeObserver) { new ResizeObserver(fit).observe(viewport); }
             else window.addEventListener('resize', fit);
             frame.addEventListener('load', fit);
             signin.addEventListener('click', function(){
@@ -1102,29 +1123,31 @@
                 }, 800);
             });
             reload.addEventListener('click', function(){ frame.src = PIA.embed_url; });
-            toggle.addEventListener('click', function(){
-                const hidden = viewport.style.display === 'none';
-                viewport.style.display = hidden ? '' : 'none';
-                toggle.textContent = hidden ? 'Hide' : 'Show';
-                if (hidden) fit();
-            });
-            card.appendChild(wrap);
-            wrap._frame = viewport; wrap._toggle = toggle;
-            return wrap;
+            piaThread.appendChild(wrap);
+            piaPane = { wrap: wrap, frame: frame, fit: fit };
+            return piaPane;
         }
-        // Desktop width Pia's embed is rendered at, and the width of the centred
-        // content block (chat + Automation panel) it draws at that size.
-        const PIA_NATURAL_WIDTH = 1200;
-        const PIA_CONTENT_WIDTH = 800;
+        function openPiaTab(){
+            if (!PIA || !PIA.enabled) return;
+            if (liveMode) { showToast('End or leave the live chat first', 'error'); return; }
+            ensurePiaPane();
+            setMode('pia');
+        }
+
+        // After Start, Pia runs on its side and asks its questions (pick a
+        // computer, pick a user — with the choices) in its own chat, so the pod
+        // switches to the Pia tab and the card keeps following the run.
         function trackPiaRun(card, correlationId, name){
             const line = document.createElement('div');
             line.className = 'ac-result muted pia-track';
             const icon = document.createElement('span'); icon.className = 'i'; icon.textContent = 'hourglass_top';
             const label = document.createElement('span'); label.textContent = PIA_STATE_LABELS.unknown;
-            line.appendChild(icon); line.appendChild(label);
+            const go = document.createElement('button'); go.type = 'button'; go.className = 'pia-mini'; go.textContent = 'Open Pia tab';
+            go.addEventListener('click', openPiaTab);
+            line.appendChild(icon); line.appendChild(label); line.appendChild(go);
             card.appendChild(line);
-            const embed = piaFrame(card);
             scrollThread(aiThread);
+            openPiaTab();
             let polls = 0, lastState = '', told = false;
             async function poll(){
                 polls += 1;
@@ -1149,14 +1172,11 @@
                         if (final || (state === 'waiting_for_input' && !told)) {
                             told = told || state === 'waiting_for_input';
                             recordActionOutcome('[Pia automation “' + name + '” (correlation ' + correlationId + '): ' + text
-                                + (final ? '' : '. The tech answers Pia in the Pia chat framed in the card; check_pia_automation reports progress.') + ']');
+                                + (final ? '' : '. The tech answers Pia in the Pia tab of this pod; check_pia_automation reports progress.') + ']');
                         }
+                        if (final && currentMode === 'pia') showToast('Pia: ' + (PIA_STATE_LABELS[state] || state).toLowerCase() + ' — the Assistant tab has the outcome');
                     }
-                    if (final) {
-                        // Leave Pia's transcript available but out of the way.
-                        if (embed && embed._frame && state === 'completed') { embed._frame.style.display = 'none'; embed._toggle.textContent = 'Show'; }
-                        return;
-                    }
+                    if (final) return;
                 }
                 // Poll briskly at first (the form usually appears within seconds),
                 // then ease off; stop after ~10 minutes — the tech can ask Hercules.
@@ -1264,9 +1284,9 @@
         // ===== Send (AI) =====
         async function sendMessage(){
             const text = chatInput.value.trim();
-            // Call mode has no composer — never let a stray Enter leak the tech's
-            // keystrokes into the AI thread while they are watching a transcript.
-            if (currentMode === 'call') return;
+            // Call and Pia modes have no composer — never let a stray Enter leak the
+            // tech's keystrokes into the AI thread while they are in another pane.
+            if (currentMode === 'call' || currentMode === 'pia') return;
             if (liveMode) { sendLiveMessage(text); return; }
             if ((!text && pendingAttachments.length === 0) || isStreaming) return;
 
@@ -2233,6 +2253,7 @@
         }
         function startKbArticle(){
             if (!HUDU_ENABLED || currentMode === 'call') return;
+            if (currentMode === 'pia') setMode('ai');
             if (liveMode) { showToast('Switch back to the Hercules chat to create a KB article', 'error'); return; }
             const existing = liveKbCard();
             if (existing) {
@@ -2247,6 +2268,7 @@
         }
         function askPia(){
             if (!PIA || !PIA.enabled || currentMode === 'call') return;
+            if (currentMode === 'pia') setMode('ai');
             if (liveMode) { showToast('Switch back to the Hercules chat to ask about Pia', 'error'); return; }
             if (isStreaming) { showToast('Wait for Hercules to finish, then try again', 'error'); return; }
             chatInput.value = 'Read this ticket and tell me which of this client\'s Pia automations, if any, would handle it. '
@@ -2536,7 +2558,8 @@
         }
 
         function setMode(mode, skipServer){
-            if (mode !== 'live' && mode !== 'call') mode = 'ai';
+            if (mode === 'pia' && !(PIA && PIA.enabled)) mode = 'ai';
+            if (mode !== 'live' && mode !== 'call' && mode !== 'pia') mode = 'ai';
             const prev = currentMode;
             if (mode === prev) return;
             currentMode = mode;
@@ -2544,9 +2567,11 @@
             liveMode = on;
             document.body.classList.toggle('live-mode', on);
             document.body.classList.toggle('call-mode', mode === 'call');
+            document.body.classList.toggle('pia-mode', mode === 'pia');
             aiTab.classList.toggle('active', mode === 'ai');
             liveTab.classList.toggle('active', on);
             callTab.classList.toggle('active', mode === 'call');
+            piaTab.classList.toggle('active', mode === 'pia');
             // Leave-transitions run first, and only for the mode we were actually in —
             // /live/end must never fire for a session that was never started.
             if (prev === 'live') {
@@ -2568,6 +2593,10 @@
                 modeText.textContent = 'Call — phone transcript, internal only';
                 openCallWs();
                 scrollThread(callThread);
+            } else if (mode === 'pia') {
+                modeText.textContent = 'Pia — run an automation for this ticket';
+                const pane = ensurePiaPane();
+                if (pane) requestAnimationFrame(pane.fit);
             } else {
                 chatInput.placeholder = 'Ask about ticket #' + TICKET.id + '…';
                 modeText.textContent = 'Assistant — ask about this ticket';
@@ -3198,6 +3227,7 @@
         aiTab.addEventListener('click', function(){ setMode('ai'); });
         liveTab.addEventListener('click', function(){ setMode('live'); });
         callTab.addEventListener('click', function(){ setMode('call'); });
+        piaTab.addEventListener('click', openPiaTab);
 
         // Resume an already-active live session after a pod reload.
         if (LIVE_ACTIVE) setMode('live', true);
