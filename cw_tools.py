@@ -18,11 +18,16 @@ import re
 
 import cw_client
 import hudu_client
+import pia_client
 
 # --- Tool specifications (OpenAI/OpenRouter function-calling format) ---------
 
 HUDU_TOOLS = {"search_hudu", "get_hudu_article", "get_hudu_asset"}
-READ_TOOLS = {"search_tickets", "get_ticket_details", "list_ticket_statuses"} | HUDU_TOOLS
+# Pia Tech Assist: listing and checking are reads; STARTING an automation is a
+# write (it acts on a client's tenant) and goes through the confirm card.
+PIA_READ_TOOLS = {"list_pia_automations", "check_pia_automation"}
+PIA_TOOLS = PIA_READ_TOOLS | {"run_pia_automation"}
+READ_TOOLS = {"search_tickets", "get_ticket_details", "list_ticket_statuses"} | HUDU_TOOLS | PIA_READ_TOOLS
 WRITE_TOOLS = {
     "add_internal_note",
     "add_discussion_note",
@@ -30,6 +35,7 @@ WRITE_TOOLS = {
     "set_ticket_status",
     "log_time",
     "create_hudu_article",
+    "run_pia_automation",
 }
 
 TOOL_SPECS = [
@@ -353,12 +359,80 @@ TOOL_SPECS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_pia_automations",
+            "description": (
+                "The Pia Tech Assist automations available for THIS ticket's client (unlock account, "
+                "reset password, mailbox/calendar permissions, restart services, printer and Outlook "
+                "troubleshooting, onboarding/offboarding, ...), each with its package_id. Call it to "
+                "refresh the list in the PIA section of your instructions or when the tech asks what Pia "
+                "can do here. Also confirms Pia is set up for this client."
+            ),
+            "parameters": {"type": "object", "additionalProperties": False, "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_pia_automation",
+            "description": (
+                "Start a Pia automation for this ticket — ONLY one whose package_id appears in the PIA "
+                "section or in list_pia_automations for this client, and only when the tech agrees. The "
+                "tech sees a confirm card first. Once started, Pia opens its own chat on this ticket and "
+                "asks the tech for any details it still needs (which user, which mailbox) as a form in "
+                "the Pia pod; it then does the work and posts an audit note on the ticket. Do not pass "
+                "inputs — Pia collects them itself."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "package_id": {"type": "string", "description": "The automation's package_id (a GUID) from the PIA list."},
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "One or two sentences, for the tech, on why this automation fits the ticket "
+                            "and what it will do — grounded in the ticket (name the user/mailbox/machine "
+                            "it concerns if the ticket says)."
+                        ),
+                    },
+                },
+                "required": ["package_id", "reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_pia_automation",
+            "description": (
+                "Status of a Pia automation started from this chat, by its correlation_id: queued, "
+                "running, waiting for the tech's answer in the Pia pod (with the question Pia is asking), "
+                "completed, or failed — plus the recent activity log."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "correlation_id": {"type": "string", "description": "The correlation id returned when it was started."},
+                },
+                "required": ["correlation_id"],
+            },
+        },
+    },
 ]
 
 
-def specs_for(ticket: dict) -> list[dict]:
+def specs_for(ticket: dict, pia_enabled: bool | None = None) -> list[dict]:
     """The tool list for a ticket. Tools that cannot work for this ticket are
-    withheld rather than offered and then failed."""
+    withheld rather than offered and then failed.
+
+    pia_enabled: whether Pia is set up for this ticket's client (see
+    pia_client.readiness). None = use the cached answer, or withhold the Pia
+    tools when that is unknown — Pia must be verified for the client first.
+    """
     specs = TOOL_SPECS
     if not ticket.get("board_id"):
         specs = [s for s in specs if s["function"]["name"] not in ("list_ticket_statuses", "set_ticket_status")]
@@ -366,6 +440,11 @@ def specs_for(ticket: dict) -> list[dict]:
         specs = [s for s in specs if s["function"]["name"] != "send_customer_email"]
     if not hudu_client.is_configured():
         specs = [s for s in specs if s["function"]["name"] not in HUDU_TOOLS | {"create_hudu_article"}]
+    if pia_enabled is None:
+        ready = pia_client.cached_readiness(ticket.get("company_id")) if pia_client.is_configured() else None
+        pia_enabled = bool(ready and ready.get("enabled"))
+    if not pia_enabled:
+        specs = [s for s in specs if s["function"]["name"] not in PIA_TOOLS]
     return specs
 
 
@@ -390,7 +469,7 @@ async def run_read_tool(name: str, args: dict, ticket: dict) -> str:
     are wrapped as untrusted — other tickets' notes are written by customers and
     must never be read as instructions.
     """
-    source = "HUDU" if name in HUDU_TOOLS else "CONNECTWISE"
+    source = "HUDU" if name in HUDU_TOOLS else "PIA" if name in PIA_READ_TOOLS else "CONNECTWISE"
     handler = _READ_DISPATCH.get(name)
     if handler is None:
         result = {"error": f"Unknown tool '{name}'"}
@@ -614,6 +693,60 @@ async def _tool_get_hudu_asset(args: dict, ticket: dict) -> dict:
     return asset or {"error": f"No Hudu asset with id {asset_id}."}
 
 
+PIA_HOW_IT_WORKS = (
+    "Starting an automation (run_pia_automation) makes Pia open its own chat session on this ticket; "
+    "Pia asks the technician for any missing details as a form in the Pia pod on the ticket, then "
+    "runs and posts an audit note. Hercules tracks it with check_pia_automation."
+)
+
+
+def pia_catalog_lines(automations: list[dict]) -> list[str]:
+    """One compact line per automation, grouped by category, for the prompt and the list tool."""
+    lines = []
+    current = None
+    for o in automations:
+        if o["category"] != current:
+            current = o["category"]
+            lines.append(f"[{current or 'Other'}]")
+        lines.append(f"- {o['button']} — \"{o['text']}\" (package_id {o['package_id']})")
+    return lines
+
+
+async def _tool_list_pia_automations(args: dict, ticket: dict) -> dict:
+    ready = await pia_client.readiness(ticket.get("company_id"))
+    payload: dict = {
+        "client": ticket.get("company_name") or "",
+        "pia_enabled_for_client": ready["enabled"],
+    }
+    if not ready["enabled"]:
+        payload["result"] = pia_client.not_ready_message(ready, ticket.get("company_name") or "")
+        payload["instruction"] = "Do not offer Pia automations for this ticket."
+        return payload
+    client = ready["client"] or {}
+    payload["pia_client"] = {"name": client.get("name"), "url": client.get("url"), "tags": client.get("tags")}
+    payload["automations"] = [
+        {"package_id": o["package_id"], "button": o["button"], "use_when": o["text"], "category": o["category"],
+         "automation": o["name"]}
+        for o in ready["automations"]
+    ]
+    payload["how_it_works"] = PIA_HOW_IT_WORKS
+    return payload
+
+
+async def _tool_check_pia_automation(args: dict, ticket: dict) -> dict:
+    corr = str(args.get("correlation_id") or "").strip()
+    if not corr:
+        return {"error": "correlation_id is required — it was returned when the automation was started."}
+    try:
+        report = await pia_client.execution_report(corr)
+    except pia_client.PiaError as e:
+        return {"error": str(e)}
+    if report["state"] == "waiting_for_input":
+        report["instruction"] = ("Tell the tech, in one line, that Pia is waiting for them in the Pia pod on this "
+                                 "ticket and what it is asking. Hercules cannot answer Pia's form for them.")
+    return report
+
+
 _READ_DISPATCH = {
     "search_tickets": _tool_search_tickets,
     "get_ticket_details": _tool_get_ticket_details,
@@ -621,6 +754,8 @@ _READ_DISPATCH = {
     "search_hudu": _tool_search_hudu,
     "get_hudu_article": _tool_get_hudu_article,
     "get_hudu_asset": _tool_get_hudu_asset,
+    "list_pia_automations": _tool_list_pia_automations,
+    "check_pia_automation": _tool_check_pia_automation,
 }
 
 
@@ -674,11 +809,22 @@ def build_proposal(call_id: str, name: str, args: dict, ticket: dict) -> dict:
                          "Create article", text=str(args.get("body") or "").strip(),
                          placeholder="Purpose: ...\n1. ...\n2. ...",
                          article_title=str(args.get("title") or "").strip()[:200], hudu_scope=scope)
+    if name == "run_pia_automation":
+        package_id = str(args.get("package_id") or "").strip()
+        option = pia_client.find_option(ticket.get("company_id"), package_id)
+        label = option["button"] if option else "a Pia automation"
+        automation = option["name"] if option else ""
+        subtitle = (f"{automation} · Pia asks for details in its pod, then runs" if option
+                    else "Not in this client's Pia catalogue — it will be refused")
+        return _proposal(call_id, name, f"Start “{label}” in Pia for {ref}", subtitle, "Start in Pia",
+                         text=str(args.get("reason") or "").strip(), package_id=package_id,
+                         automation_name=automation)
     return _proposal(call_id, name, name, "", "Confirm", text=text)
 
 
 def _proposal(call_id, action, title, subtitle, confirm_label, text="", placeholder="",
-              status_name="", minutes=None, article_title="", hudu_scope="") -> dict:
+              status_name="", minutes=None, article_title="", hudu_scope="",
+              package_id="", automation_name="") -> dict:
     return {
         "kind": "action",
         "id": call_id,
@@ -692,6 +838,8 @@ def _proposal(call_id, action, title, subtitle, confirm_label, text="", placehol
         "minutes": minutes,
         "article_title": article_title,
         "hudu_scope": hudu_scope,
+        "package_id": package_id,
+        "automation_name": automation_name,
     }
 
 
@@ -707,6 +855,16 @@ def proposal_receipt(name: str, args: dict) -> str:
                 "draft as it currently stands; revise the FULL article and call create_hudu_article "
                 "again, which replaces the draft. Nothing is saved to Hudu until they press Create "
                 "article. Reply with one short line inviting edits."
+            ),
+        })
+    if name == "run_pia_automation":
+        return json.dumps({
+            "status": "awaiting_technician",
+            "detail": (
+                "The Pia automation is on the technician's screen as a card with a Start button. Nothing has "
+                "been started yet. When they press it, Pia opens its own chat on this ticket and asks them for "
+                "the details it needs in the Pia pod; the card then tracks progress and you will see the outcome "
+                "in a later message. Do NOT call this tool again for the same request. Reply with one short line."
             ),
         })
     what = {

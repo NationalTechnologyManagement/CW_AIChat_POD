@@ -93,6 +93,7 @@ anything the platform has set.
 | `OPENROUTER_API_KEY`       | `openrouter-api-key`          |                                 |
 | `SCREENCONNECT_API_SECRET` | `screenconnect-api-secret`    | ScreenConnect RESTful extension |
 | `SMS_AGENT_SECRET`         | `sms-agent-tech-api-secret`   | ntm-sms-agent (`TECH_API_SECRET`) |
+| `PIA_API_SECRET`           | `pia-api-secret`              | Pia API app ("full control")    |
 | `POD_SECRET`               | `hercules-pod-secret`         | the Hercules pod clients        |
 | `LIVE_BRIDGE_SECRET`       | `hercules-live-bridge-secret` | the Hercules Node server        |
 | `CALL_BRIDGE_SECRET`       | `hercules-ingest-secret`      | the voice bridge                |
@@ -185,6 +186,50 @@ the `hudu_companies` table and in memory, so it is looked up once per client,
 not on every chat turn; the pod also pre-resolves it when a ticket opens. A
 "not in Hudu" answer is retried after six hours in case the client gets synced
 later. To force a re-check, delete that client's row from `hudu_companies`.
+
+## Pia setup
+
+Pia (pia.ai) runs NTM's service-desk automations — account unlocks, password
+resets, mailbox and calendar permissions, restarts, Outlook/printer/OneDrive
+troubleshooting, onboarding and offboarding. Techs normally reach them through
+the separate Pia pod on the ticket; Hercules brings them into its own chat.
+
+In the Pia tenant create an API app (**Users > Manage API Apps**, every scope —
+the tools need `TechAssist.Read`, `Packages.Execute` and
+`Packages.MonitorExecution`), store its secret in the vault as `pia-api-secret`,
+and set:
+
+```env
+PIA_BASE_URL=https://trustntm.pia.ai
+```
+
+**Verified per client first.** Pia stamps each of its clients with the
+ConnectWise company id (`psaCompanyId`) and publishes Tech Assist automations
+per PSA company. When a ticket opens, Hercules looks the client up in Pia and
+reads the automations published to it. A client that is not in Pia, or has
+nothing published, gets no Pia tools, no Pia button and no mention of Pia —
+the assistant is told not to offer it. Both lookups are cached for ten minutes.
+
+**Reading the ticket.** For a Pia-enabled client the pod load also asks the
+default model to match the ticket's summary and description against the
+client's catalogue, strictly (same task, not same topic). Matches appear as a
+*Pia can help* panel at the top of the chat with a **Start** button each; the
+full catalogue is also in the assistant's system prompt, so in conversation it
+can recognise "unlock Dana's account" as a Pia automation and offer it. The
+**Pia** button in the action row asks it to do exactly that for the ticket.
+
+**Starting one** is a write and goes through the usual confirm card
+(`run_pia_automation` → `/action`). The server re-checks that the client is
+Pia-enabled and that the package is in *that client's* catalogue before
+calling Pia. Pia then opens its own chat session on the ticket and asks the
+tech for whatever it still needs (which user, which mailbox) as a form **in the
+Pia pod on the ticket** — the API offers no way to answer that form, and the
+package input keys are not published, so Hercules deliberately passes no
+inputs. The card polls `/pia/status` and shows the state (queued, running,
+*waiting for your answer in the Pia pod* with Pia's question, completed,
+failed), and the outcome is fed back into the chat so `check_pia_automation`
+and follow-up questions are grounded. Pia posts its own audit notes to the
+ticket as it runs.
 
 ## Admin dashboard settings
 

@@ -201,6 +201,10 @@
         .related-item .num{font-size:11px;font-weight:600;color:var(--accent);white-space:nowrap;}
         .related-item .sum{font-size:12px;color:var(--text-2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .related-item .st{font-size:10px;color:var(--muted);white-space:nowrap;}
+        .pia-panel{border-color:var(--accent-border);}
+        .pia-start{border:1px solid var(--accent-border);background:var(--accent-soft);color:var(--accent);border-radius:7px;padding:3px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;}
+        .pia-start:hover{opacity:.85;}
+        .ac-result.warn{color:#f0c08e;}
 
         /* live channel header + system lines + typing + receipts */
         .live-head{align-self:center;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:20px;padding:5px 13px;text-align:center;}
@@ -536,6 +540,7 @@
                             <button class="act" id="saveBtn" disabled><span class="i">bookmark_add</span>Save</button>
                             <button class="act" id="kbBtn" title="Write this fix up as a Hudu KB article"{% if not hudu_enabled %} hidden{% endif %}><span class="i">menu_book</span>Create KB</button>
                             <button class="act" id="smsBtn" title="Text the customer about this ticket"{% if not sms_enabled %} hidden{% endif %}><span class="i">sms</span>Text</button>
+                            <button class="act" id="piaBtn" title="Ask Hercules which Pia automation could handle this ticket"{% if not pia.enabled %} hidden{% endif %}><span class="i">smart_toy</span>Pia</button>
                             <button class="act resolve" id="resolveBtn"><span class="i">task_alt</span>Resolve</button>
                         </div>
                     </div>
@@ -753,6 +758,9 @@
         const MEMBERS = {{ members | tojson }};
         const CURRENT_MEMBER = {{ current_member | tojson }};
         const HUDU_ENABLED = {{ hudu_enabled | tojson }};
+        // Pia Tech Assist for this ticket's client — verified server-side, so
+        // enabled === false means "don't offer Pia here", whatever the reason.
+        const PIA = {{ pia | tojson }};
         const BOARD_OPTIONS = {{ board_options | tojson }};
         const CW_MANAGE_URL = {{ cw_manage_url | tojson }};
         const SCREENCONNECT_ENABLED = {{ screenconnect_enabled | tojson }};
@@ -959,6 +967,103 @@
             aiThread.appendChild(panel);
         }
         renderSimilarTickets();
+
+        // ===== Pia Tech Assist =====
+        // Hercules read the ticket at load and, for a client that IS set up in
+        // Pia, picked the automations that would do what the ticket asks. Each
+        // row opens the same confirm card the chat would — nothing starts until
+        // the tech presses Start.
+        function piaProposal(s){
+            return {
+                kind: 'action', id: 'pia-' + s.package_id, action: 'run_pia_automation',
+                title: 'Start “' + s.button + '” in Pia for #' + TICKET.id,
+                subtitle: (s.name || '') + ' · Pia asks for details in its pod, then runs',
+                confirm_label: 'Start in Pia', text: s.reason || '',
+                package_id: s.package_id, automation_name: s.name || '',
+            };
+        }
+        function renderPiaSuggestions(){
+            if (!PIA || !PIA.enabled || !PIA.suggestions || !PIA.suggestions.length) return;
+            clearWelcome(aiThread);
+            const panel = document.createElement('div');
+            panel.className = 'related pia-panel';
+            const title = document.createElement('div');
+            title.className = 'related-title';
+            title.textContent = 'Pia can help · ' + (PIA.client_name || TICKET.company_name || 'this client');
+            panel.appendChild(title);
+            PIA.suggestions.forEach(function(s){
+                const item = document.createElement('div');
+                item.className = 'related-item';
+                const num = document.createElement('span'); num.className = 'num'; num.textContent = s.button;
+                const sum = document.createElement('span'); sum.className = 'sum'; sum.textContent = s.reason || s.name; sum.title = s.reason || s.name;
+                const start = document.createElement('button');
+                start.type = 'button'; start.className = 'pia-start'; start.textContent = 'Start';
+                start.addEventListener('click', function(){
+                    if (liveMode || currentMode === 'call') { showToast('Switch back to the Hercules chat to start a Pia automation', 'error'); return; }
+                    renderActionCard(piaProposal(s));
+                });
+                item.appendChild(num); item.appendChild(sum); item.appendChild(start);
+                panel.appendChild(item);
+            });
+            aiThread.appendChild(panel);
+        }
+        renderPiaSuggestions();
+
+        // After Start, Pia runs on its side; the card follows along. The usual
+        // first stop is "waiting for the tech" — Pia asks its questions as a form
+        // in the Pia pod on this ticket, which Hercules cannot answer for them.
+        const PIA_STATE_LABELS = {
+            queued: 'Pia has queued it…',
+            running: 'Pia is running it…',
+            waiting_for_input: 'Pia needs your answer in the Pia pod on this ticket',
+            completed: 'Pia finished',
+            error: 'Pia reported a failure',
+            cancelled: 'Cancelled in Pia',
+            unknown: 'Waiting for Pia to pick it up…',
+        };
+        function trackPiaRun(card, correlationId, name){
+            const line = document.createElement('div');
+            line.className = 'ac-result muted pia-track';
+            const icon = document.createElement('span'); icon.className = 'i'; icon.textContent = 'hourglass_top';
+            const label = document.createElement('span'); label.textContent = PIA_STATE_LABELS.unknown;
+            line.appendChild(icon); line.appendChild(label);
+            card.appendChild(line);
+            let polls = 0, lastState = '', told = false;
+            async function poll(){
+                polls += 1;
+                let r = null;
+                try {
+                    const res = await fetch('/pia/status?correlationId=' + encodeURIComponent(correlationId), { headers: { 'X-Pod-Token': POD_TOKEN } });
+                    r = await res.json();
+                } catch (e) { r = null; }
+                if (r && r.success) {
+                    const state = r.state || 'unknown';
+                    let text = PIA_STATE_LABELS[state] || state;
+                    if (state === 'waiting_for_input' && r.pia_question) text += ' — “' + r.pia_question + '”';
+                    if (state === 'error' && r.errors && r.errors.length) text += ' — ' + r.errors[r.errors.length - 1];
+                    label.textContent = text;
+                    const final = state === 'completed' || state === 'error' || state === 'cancelled';
+                    icon.textContent = state === 'completed' ? 'check_circle' : state === 'error' ? 'error' : state === 'waiting_for_input' ? 'chat' : 'hourglass_top';
+                    line.classList.toggle('muted', !final && state !== 'waiting_for_input');
+                    line.classList.toggle('warn', state === 'error' || state === 'waiting_for_input');
+                    if (state !== lastState) {
+                        lastState = state;
+                        // Tell Hercules so a follow-up question gets a grounded answer.
+                        if (final || (state === 'waiting_for_input' && !told)) {
+                            told = told || state === 'waiting_for_input';
+                            recordActionOutcome('[Pia automation “' + name + '” (correlation ' + correlationId + '): ' + text
+                                + (final ? '' : '. The tech answers Pia in the Pia pod on this ticket; check_pia_automation reports progress.') + ']');
+                        }
+                    }
+                    if (final) return;
+                }
+                // Poll briskly at first (the form usually appears within seconds),
+                // then ease off; stop after ~10 minutes — the tech can ask Hercules.
+                if (polls < 60) setTimeout(poll, polls < 10 ? 5000 : 15000);
+                else label.textContent += ' · ask Hercules to check on it later';
+            }
+            setTimeout(poll, 3000);
+        }
 
         // Load saved AI messages
         if (SAVED_MESSAGES && SAVED_MESSAGES.length > 0) {
@@ -1785,7 +1890,7 @@
         const ACTION_ICONS = {
             add_internal_note: 'lock', add_discussion_note: 'forum',
             send_customer_email: 'mail', set_ticket_status: 'flag', log_time: 'schedule',
-            create_hudu_article: 'menu_book',
+            create_hudu_article: 'menu_book', run_pia_automation: 'smart_toy',
         };
 
         function addToolChip(tool, bubble){
@@ -1894,7 +1999,7 @@
                     });
                     field.value = hit || '';
                 });
-            } else if (a.action !== 'log_time') {
+            } else if (a.action !== 'log_time' && a.action !== 'run_pia_automation') {
                 const wrap = document.createElement('div'); wrap.className = 'ta-wrap';
                 field = document.createElement('textarea');
                 field.className = 'inp';
@@ -1954,7 +2059,7 @@
                     return;
                 }
                 const value = field ? String(field.value || '').trim() : '';
-                if (!value) {
+                if (!value && a.action !== 'run_pia_automation') {
                     showToast(a.action === 'set_ticket_status'
                         ? 'Pick a status from the list first' : 'Nothing to save — the draft is empty', 'error');
                     return;
@@ -1980,11 +2085,15 @@
                             member_identifier: selectedMember || null,
                             title: titleField ? titleField.value.trim() : '',
                             hudu_scope: a.hudu_scope || 'global',
+                            package_id: a.package_id || '',
                         }),
                     });
                     const data = await response.json();
                     if (data && data.success) {
                         settle('done', data.message || 'Done');
+                        if (a.action === 'run_pia_automation' && data.correlation_id) {
+                            trackPiaRun(card, data.correlation_id, a.automation_name || data.automation || a.title);
+                        }
                         if (a.action === 'create_hudu_article') {
                             setActContent(kbBtn, 'check', 'KB added');
                             if (data.url) {
@@ -2033,6 +2142,14 @@
             if (isStreaming) { showToast('Wait for Hercules to finish, then try again', 'error'); return; }
             chatInput.value = 'Create a Hudu KB article for this fix. Check Hudu for an existing article covering it first; '
                 + 'if there is one, link it and tell me. Otherwise draft a short one (purpose line, then numbered steps) for me to review.';
+            sendMessage();
+        }
+        function askPia(){
+            if (!PIA || !PIA.enabled || currentMode === 'call') return;
+            if (liveMode) { showToast('Switch back to the Hercules chat to ask about Pia', 'error'); return; }
+            if (isStreaming) { showToast('Wait for Hercules to finish, then try again', 'error'); return; }
+            chatInput.value = 'Read this ticket and tell me which of this client\'s Pia automations, if any, would handle it. '
+                + 'Name the best match and what it would do here, then offer to start it. If nothing fits, say so.';
             sendMessage();
         }
         function kbDraftContext(){
@@ -2974,6 +3091,7 @@
         saveBtn.addEventListener('click', saveToTicket);
         resolveBtn.addEventListener('click', resolveTicket);
         kbBtn.addEventListener('click', startKbArticle);
+        $('piaBtn').addEventListener('click', askPia);
         $('smsBtn').addEventListener('click', openSmsSheet);
         clearBtn.addEventListener('click', clearChat);
         aiTab.addEventListener('click', function(){ setMode('ai'); });

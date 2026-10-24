@@ -41,6 +41,7 @@ SECRETS: dict[str, str] = {
     "OPENROUTER_API_KEY": "openrouter-api-key",
     "SCREENCONNECT_API_SECRET": "screenconnect-api-secret",
     "SMS_AGENT_SECRET": "sms-agent-tech-api-secret",
+    "PIA_API_SECRET": "pia-api-secret",
     "POD_SECRET": "hercules-pod-secret",
     "LIVE_BRIDGE_SECRET": "hercules-live-bridge-secret",
     "CALL_BRIDGE_SECRET": "hercules-ingest-secret",
