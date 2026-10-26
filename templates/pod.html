@@ -175,6 +175,13 @@
         .thread.pia .pia-viewport{flex:1;min-height:0;}
         body.pia-mode .composer{display:none;}
         body.pia-mode .attach-strip{display:none !important;}
+        /* Pia takes the whole Hercules window: Pia has its own page, so the rail,
+           header controls, ticket card and composer only steal room from it. The
+           tab strip stays so the tech can get back to Assistant, Live and Call. */
+        body.pia-mode .rail,body.pia-mode .top,body.pia-mode .context-card,body.pia-mode .composer-wrap{display:none;}
+        body.pia-mode .mode-pill-wrap{padding:8px 8px 6px;}
+        body.pia-mode .thread.pia{padding:0;}
+        body.pia-mode .pia-embed{border:0;border-radius:0;}
 
         .welcome{text-align:center;color:var(--muted);padding:22px 10px;font-size:12.5px;line-height:1.6;}
 
