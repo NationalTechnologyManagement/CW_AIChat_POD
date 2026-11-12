@@ -490,6 +490,12 @@ async def create_time_entry(
 
     When add_to_internal is set, the notes are also posted to the ticket's
     Internal Analysis tab, so a single entry covers both time and internal notes.
+
+    These notes are a technician's working notes and never go to Discussion:
+    Discussion is what the customer sees, and the only thing the pod puts there
+    is a customer email (send_email_to_contact). The flag is sent explicitly
+    because ConnectWise ticks Discussion by default when it is left out, which
+    copied every internal note logged with time onto the customer-visible tab.
     """
     start_dt = _parse_iso(time_start)
     end_dt = _parse_iso(time_end)
@@ -504,6 +510,8 @@ async def create_time_entry(
         # whole-second UTC (yyyy-MM-ddTHH:mm:ssZ) here.
         "timeStart": _cw_datetime(start_dt),
         "timeEnd": _cw_datetime(end_dt),
+        # Always explicit, notes or not: never rely on ConnectWise's default.
+        "addToDetailDescriptionFlag": False,
     }
     if notes:
         payload["notes"] = notes
